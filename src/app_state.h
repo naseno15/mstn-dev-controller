@@ -41,7 +41,10 @@ public:
   void apply_keymap_field(const std::string& field, const std::string& value);
 
   void test_door();
-  void test_vib();
+  void test_vib();                         // legacy: both on
+  void test_vib_on();                      // legacy: both on
+  void test_vib_off();                     // both off
+  void test_vib_set(bool left, bool right); // absolute L/R (hold UI)
   void test_off();
   void probe_driver();
   void open_zadig();

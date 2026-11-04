@@ -118,3 +118,6 @@ add_executable(check_decode
 )
 target_include_directories(check_decode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(check_decode PRIVATE /utf-8)
+
+add_executable(check_feedback_pkt checks/check_feedback_pkt.cpp)
+target_compile_options(check_feedback_pkt PRIVATE /utf-8)

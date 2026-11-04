@@ -27,9 +27,15 @@ bool AppWindow::create() {
   wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
   RegisterClassExW(&wc);
 
+  // Locked ~16:10 client — taller so monitor gauges breathe
+  const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+  RECT wr{0, 0, 1280, 820};
+  AdjustWindowRect(&wr, style, FALSE);
   hwnd_ = CreateWindowExW(
       0, kClass, L"mstnDevController — Type2",
-      WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 820,
+      style,
+      CW_USEDEFAULT, CW_USEDEFAULT,
+      wr.right - wr.left, wr.bottom - wr.top,
       nullptr, nullptr, inst_, this);
   if (!hwnd_) return false;
 
@@ -74,6 +80,17 @@ LRESULT CALLBACK AppWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 LRESULT AppWindow::handle_msg(UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
+  case WM_GETMINMAXINFO: {
+    auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
+    const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    RECT wr{0, 0, 1280, 820};
+    AdjustWindowRect(&wr, style, FALSE);
+    const int w = wr.right - wr.left;
+    const int h = wr.bottom - wr.top;
+    mmi->ptMinTrackSize = {w, h};
+    mmi->ptMaxTrackSize = {w, h};
+    return 0;
+  }
   case WM_SIZE:
     resize_webview();
     return 0;
@@ -88,8 +105,11 @@ LRESULT AppWindow::handle_msg(UINT msg, WPARAM wp, LPARAM lp) {
     }
     return 0;
   }
-  case WM_DESTROY:
+  case WM_CLOSE:
     app_.stop_usb();
+    DestroyWindow(hwnd_);
+    return 0;
+  case WM_DESTROY:
     KillTimer(hwnd_, timer_id_);
     PostQuitMessage(0);
     return 0;
@@ -129,8 +149,8 @@ void AppWindow::init_webview() {
                       controller_ = ctrl;
                       ctrl->get_CoreWebView2(&webview_);
                       resize_webview();
+                      ctrl->put_ZoomFactor(1.06);
 
-                      // Allow file access for local UI
                       ComPtr<ICoreWebView2Settings> settings;
                       webview_->get_Settings(&settings);
                       if (settings) {

@@ -12,7 +12,7 @@ struct ControllerState {
   int power = 0;
   int brake = 0;
   int power_max = 5;
-  int brake_max = 8;
+  int brake_max = 9; // N + B1..B8 + EB
 
   bool pedal = false;
   bool btn_a = false;

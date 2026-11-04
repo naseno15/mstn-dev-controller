@@ -171,37 +171,107 @@ void AppState::test_door() {
     push_toast("toast_applied", "feedback disabled");
     return;
   }
-  mmf_.write_feedback(true, false, false);
-  test_frames_left_ = 45;
-  push_toast("toast_test_door", "MMF door=1");
+  // Toggle door lamp; stay on until toggled off / test_off (no auto-clear).
+  bool next = true;
+  {
+    std::lock_guard lock(mu_);
+    next = !live_.door_lamp;
+    live_.door_lamp = next;
+    // keep vib as-is
+  }
+  bool vib_l = false, vib_r = false;
+  {
+    std::lock_guard lock(mu_);
+    vib_l = live_.vib_l;
+    vib_r = live_.vib_r;
+  }
+  mmf_.write_feedback(next, vib_l, vib_r);
+  test_frames_left_ = 0; // do not auto-clear door
+  const bool usb_ok = usb_.send_feedback(next, vib_l, vib_r);
+  if (!usb_.running())
+    push_toast("toast_test_door", "กด Start ก่อน");
+  else if (!usb_ok)
+    push_toast("toast_test_door", usb_.last_fb_error());
+  else
+    push_toast("toast_test_door", next ? "ไฟประตู ON" : "ไฟประตู OFF");
 }
 
-void AppState::test_vib() {
+void AppState::test_vib() { test_vib_set(true, true); }
+
+void AppState::test_vib_on() { test_vib_set(true, true); }
+
+void AppState::test_vib_off() { test_vib_set(false, false); }
+
+void AppState::test_vib_set(bool left, bool right) {
   if (profile_.disable_feedback) {
     push_toast("toast_applied", "feedback disabled");
     return;
   }
-  mmf_.write_feedback(false, true, true);
-  test_frames_left_ = 45;
-  push_toast("toast_test_vib", "MMF vib L+R");
+  bool door = false;
+  {
+    std::lock_guard lock(mu_);
+    door = live_.door_lamp;
+    live_.vib_l = left;
+    live_.vib_r = right;
+  }
+  mmf_.write_feedback(door, left, right);
+  test_frames_left_ = 0;
+  const bool usb_ok = usb_.send_feedback(door, left, right);
+  if (!left && !right) return; // quiet on release
+  if (!usb_.running())
+    push_toast("toast_test_vib", "กด Start ก่อน");
+  else if (!usb_ok)
+    push_toast("toast_test_vib", usb_.last_fb_error());
+  else {
+    const char* which = (left && right) ? "L+R" : left ? "L" : "R";
+    push_toast("toast_test_vib", which);
+  }
 }
 
 void AppState::test_off() {
   mmf_.clear_feedback();
   test_frames_left_ = 0;
+  usb_.send_feedback(false, false, false);
+  {
+    std::lock_guard lock(mu_);
+    live_.door_lamp = false;
+    live_.vib_l = false;
+    live_.vib_r = false;
+  }
   push_toast("toast_test_off", "");
 }
 
 void AppState::probe_driver() {
+  // Already holding live WinUSB → treat as OK (CreateFile would falsely look busy/bad)
+  if (usb_.has_handle()) {
+    {
+      std::lock_guard lock(mu_);
+      live_.driver = "ok";
+      driver_prompt_ = false;
+    }
+    push_toast("toast_driver_ok", "in use by this app");
+    return;
+  }
+
   const auto st = UsbType2::probe_driver(device_vidpid_needle(profile_.device_kind));
   {
     std::lock_guard lock(mu_);
-    live_.driver = st;
-    driver_prompt_ = (st == "needs_winusb");
+    live_.driver = st.rfind("wrong_driver", 0) == 0 ? "needs_winusb" : st;
+    driver_prompt_ = (st == "needs_winusb" || st.rfind("wrong_driver", 0) == 0);
   }
-  if (st == "ok") push_toast("toast_driver_ok", st);
-  else if (st == "needs_winusb") push_toast("toast_driver_bad", "open Zadig");
-  else push_toast("toast_driver_bad", st);
+  if (st == "ok") {
+    push_toast("toast_driver_ok", "WinUSB");
+  } else if (st == "busy") {
+    push_toast("toast_driver_busy", "ปิด denconv / แอปอื่นก่อน");
+  } else if (st == "missing") {
+    push_toast("toast_driver_missing", "เสียบ Type2 แล้วลองใหม่");
+  } else if (st.rfind("wrong_driver:", 0) == 0) {
+    push_toast("toast_driver_wrong", st.substr(13) + " → เปลี่ยนเป็น WinUSB ใน Zadig");
+  } else if (st == "needs_winusb") {
+    push_toast("toast_driver_bad", "Zadig → WinUSB");
+  } else {
+    push_toast("toast_driver_bad", st);
+  }
 }
 
 void AppState::open_zadig() {
@@ -228,18 +298,33 @@ void AppState::on_packet(const uint8_t* data, int len, double hz) {
 
 void AppState::on_usb_status(const std::string& s) {
   std::lock_guard lock(mu_);
-  live_.status = s;
-  if (s == "needs_winusb") {
+  // Friendly status codes for UI (not raw WinUSB jargon)
+  if (s == "ready" || s.rfind("connected", 0) == 0) {
+    live_.status = "ready";
+    live_.connected = true;
+    live_.driver = "ok";
+  } else if (s == "searching device") {
+    live_.status = "searching";
+  } else if (s == "needs_winusb" || s.rfind("wrong_driver", 0) == 0) {
+    live_.status = "needs_winusb";
     live_.driver = "needs_winusb";
     live_.connected = false;
     driver_prompt_ = true;
-    toast_title_ = "toast_driver_bad";
-    toast_body_ = s;
+    toast_title_ = s.rfind("wrong_driver", 0) == 0 ? "toast_driver_wrong" : "toast_driver_bad";
+    toast_body_ = s.rfind("wrong_driver:", 0) == 0 ? s.substr(13) : s;
     toast_pending_ = true;
-  } else if (s.find("not found") != std::string::npos || s.find("failed") != std::string::npos ||
-             s.find("disconnected") != std::string::npos) {
+  } else if (s.find("not found") != std::string::npos) {
+    live_.status = "missing";
     live_.connected = false;
-    if (s.find("not found") != std::string::npos) live_.driver = "missing";
+    live_.driver = "missing";
+  } else if (s == "busy" || s.find("busy") != std::string::npos || s.find("failed") != std::string::npos) {
+    live_.status = "busy";
+    live_.connected = false;
+  } else if (s.find("disconnected") != std::string::npos) {
+    live_.status = "idle";
+    live_.connected = false;
+  } else {
+    live_.status = s;
   }
 }
 
@@ -327,25 +412,41 @@ void AppState::ui_tick() {
     st = live_;
     p = profile_;
   }
+  bool door = false, vibl = false, vibr = false;
+  bool have_fb = false;
   if (mmf_.ok()) {
     if (!p.disable_feedback) {
       if (test_frames_left_ > 0) {
         --test_frames_left_;
-        if (test_frames_left_ == 0) mmf_.clear_feedback();
+        if (test_frames_left_ == 0) {
+          mmf_.clear_feedback();
+          usb_.send_feedback(false, false, false);
+        }
       }
       mmf_.read_feedback(st);
+      door = st.door_lamp;
+      vibl = st.vib_l;
+      vibr = st.vib_r;
+      have_fb = true;
       if (st.connected) mmf_.write_notches(st.brake, st.power);
     } else {
       mmf_.clear_feedback();
+      usb_.send_feedback(false, false, false);
     }
+  }
+  // Mirror MMF → physical Type2 (plugin + local test_* both write MMF first)
+  if (have_fb && !p.disable_feedback && usb_.has_handle()) {
+    usb_.send_feedback(door, vibl, vibr);
   }
   keys_.set_profile(p);
   keys_.tick(st);
   {
     std::lock_guard lock(mu_);
-    live_.door_lamp = st.door_lamp;
-    live_.vib_l = st.vib_l;
-    live_.vib_r = st.vib_r;
+    if (have_fb) {
+      live_.door_lamp = door;
+      live_.vib_l = vibl;
+      live_.vib_r = vibr;
+    }
     live_.atc = st.atc;
     live_.speed = st.speed;
     st = live_;

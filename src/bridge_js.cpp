@@ -93,6 +93,12 @@ void handle_ui_command(AppState& app, const std::string& json) {
     app.test_door();
   } else if (cmd == "test_vib") {
     app.test_vib();
+  } else if (cmd == "test_vib_on") {
+    app.test_vib_on();
+  } else if (cmd == "test_vib_off") {
+    app.test_vib_off();
+  } else if (cmd == "test_vib_set") {
+    app.test_vib_set(get_bool(json, "left", false), get_bool(json, "right", false));
   } else if (cmd == "test_off") {
     app.test_off();
   } else if (cmd == "probe_driver") {

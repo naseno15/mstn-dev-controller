@@ -4,7 +4,7 @@ Win32 + **WebView2** (offline HTML glass UI) for Densha de Go / train desk contr
 
 - Live monitor: HEX/DEC/bits, P/B notches, buttons
 - Key map + per-game presets (`profiles/<game>-<device>.json`)
-- Keyboard output, disable feedback, door/vib test via `denconvMMF`
+- Keyboard output, disable feedback, door/vib via USB vendor control + `denconvMMF`
 - Driver probe + Zadig prompt when WinUSB missing
 - i18n TH/JA/EN (Thai → bundled **Noto Sans Thai Looped**), light/dark theme, center toasts
 - Device picker: Type2 / Shinkansen / Ryojou / MTC / Keikyu / ZUIKI / DInput / XInput / DGOC-44 / DRC-184  
