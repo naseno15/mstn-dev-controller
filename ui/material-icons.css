@@ -1,0 +1,49 @@
+/* Offline Material Icons (filled + outlined) — no CDN */
+@font-face {
+  font-family: "Material Icons";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("fonts/MaterialIcons-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Material Icons Outlined";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("fonts/MaterialIconsOutlined-Regular.otf") format("opentype");
+}
+
+.material-icons,
+.material-icons-outlined {
+  font-weight: normal;
+  font-style: normal;
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "liga";
+  speak: never;
+  user-select: none;
+  vertical-align: middle;
+}
+
+.material-icons { font-family: "Material Icons"; }
+.material-icons-outlined { font-family: "Material Icons Outlined"; }
+
+.material-icons.md-14,
+.material-icons-outlined.md-14 { font-size: 14px; }
+.material-icons.md-16,
+.material-icons-outlined.md-16 { font-size: 16px; }
+.material-icons.md-18,
+.material-icons-outlined.md-18 { font-size: 18px; }
+.material-icons.md-22,
+.material-icons-outlined.md-22 { font-size: 22px; }

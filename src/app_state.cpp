@@ -1,0 +1,361 @@
+#include "app_state.h"
+
+#include <span>
+#include <sstream>
+#include <shellapi.h>
+#include <shlwapi.h>
+
+#pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "shell32.lib")
+
+namespace {
+std::string hex_pkt(const ControllerState& st) {
+  std::ostringstream o;
+  o << std::uppercase << std::hex;
+  for (int i = 0; i < st.raw_len; ++i) {
+    if (i) o << '-';
+    o.width(2);
+    o.fill('0');
+    o << static_cast<int>(st.raw[static_cast<size_t>(i)]);
+  }
+  return o.str();
+}
+
+std::wstring utf8_to_wide(const std::string& s) {
+  if (s.empty()) return {};
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+  std::wstring w(n > 0 ? n - 1 : 0, L'\0');
+  if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
+  return w;
+}
+} // namespace
+
+AppState::AppState() {
+  wchar_t path[MAX_PATH]{};
+  GetModuleFileNameW(nullptr, path, MAX_PATH);
+  PathRemoveFileSpecW(path);
+  exe_dir_ = path;
+  profile_ = default_bve6_profile();
+  calib_ = profile_.calib;
+  std::string err;
+  load_profile_path(default_profile_path(), err);
+  mmf_.open();
+  usb_.set_needle(device_vidpid_needle(profile_.device_kind));
+  usb_.set_on_packet([this](const uint8_t* d, int n, double hz) { on_packet(d, n, hz); });
+  usb_.set_on_status([this](const std::string& s) { on_usb_status(s); });
+}
+
+AppState::~AppState() {
+  usb_.stop();
+  keys_.release_all();
+  mmf_.close();
+}
+
+void AppState::set_ui_push(UiPushFn fn) { ui_push_ = std::move(fn); }
+
+void AppState::set_hwnd(HWND hwnd) {
+  hwnd_ = hwnd;
+  keys_.set_ignore_hwnd(hwnd);
+}
+
+std::wstring AppState::exe_dir() const { return exe_dir_; }
+
+std::wstring AppState::default_profile_path() const {
+  return exe_dir_ + L"\\profiles\\bve6-type2.json";
+}
+
+std::wstring AppState::preset_path_for(const std::string& game, const std::string& device) const {
+  return exe_dir_ + L"\\profiles\\" + utf8_to_wide(game + "-" + device + ".json");
+}
+
+void AppState::start_usb() {
+  usb_.set_needle(device_vidpid_needle(profile_.device_kind));
+  usb_.start();
+  push_toast("toast_started", profile_.device_kind);
+}
+
+void AppState::stop_usb() {
+  usb_.stop();
+  push_toast("toast_stopped", "");
+}
+
+bool AppState::load_profile_path(const std::wstring& path, std::string& err) {
+  Profile p;
+  if (!::load_profile(path, p, err)) return false;
+  {
+    std::lock_guard lock(mu_);
+    profile_ = p;
+    calib_ = p.calib;
+    keys_.set_profile(profile_);
+  }
+  usb_.set_needle(device_vidpid_needle(p.device_kind));
+  push_toast("toast_loaded", p.name);
+  return true;
+}
+
+bool AppState::save_profile_path(const std::wstring& path, std::string& err) {
+  bool ok = false;
+  {
+    std::lock_guard lock(mu_);
+    ok = ::save_profile(path, profile_, err);
+  }
+  if (ok) push_toast("toast_saved", "");
+  return ok;
+}
+
+bool AppState::save_game_preset(const std::string& game, const std::string& device, std::string& err) {
+  {
+    std::lock_guard lock(mu_);
+    if (!game.empty()) profile_.game_preset = game;
+    if (!device.empty()) profile_.device_kind = device;
+    profile_.name = profile_.game_preset + "-" + profile_.device_kind;
+  }
+  CreateDirectoryW((exe_dir_ + L"\\profiles").c_str(), nullptr);
+  const auto path = preset_path_for(profile_.game_preset, profile_.device_kind);
+  return save_profile_path(path, err);
+}
+
+void AppState::apply_output_settings(bool enabled, const std::string& push, double hold_ms,
+                                     bool disable_fb, const std::string& device_kind,
+                                     const std::string& game_preset) {
+  std::string from_dev, to_dev;
+  {
+    std::lock_guard lock(mu_);
+    from_dev = profile_.device_kind;
+    profile_.output_enabled = enabled;
+    profile_.push = (push == "PRESS" || push == "press") ? PushMode::Press : PushMode::Click;
+    if (hold_ms >= 0) profile_.hold_interval_ms = hold_ms;
+    profile_.disable_feedback = disable_fb;
+    if (!device_kind.empty()) profile_.device_kind = device_kind;
+    if (!game_preset.empty()) profile_.game_preset = game_preset;
+    to_dev = profile_.device_kind;
+    keys_.set_profile(profile_);
+  }
+  usb_.set_needle(device_vidpid_needle(to_dev));
+  if (disable_fb) mmf_.clear_feedback();
+  push_toast("toast_applied", from_dev + " → " + to_dev);
+}
+
+void AppState::apply_keymap_field(const std::string& field, const std::string& value) {
+  std::lock_guard lock(mu_);
+  auto& k = profile_.keys;
+  if (field == "power_up") k.power_up = value;
+  else if (field == "power_down") k.power_down = value;
+  else if (field == "power_off") k.power_off = value;
+  else if (field == "brake_up") k.brake_up = value;
+  else if (field == "brake_down") k.brake_down = value;
+  else if (field == "brake_eb") k.brake_eb = value;
+  else if (field == "pedal") k.pedal = value;
+  else if (field == "btn_a") k.btn_a = value;
+  else if (field == "btn_b") k.btn_b = value;
+  else if (field == "btn_c") k.btn_c = value;
+  else if (field == "btn_d") k.btn_d = value;
+  else if (field == "btn_select") k.btn_select = value;
+  else if (field == "btn_start") k.btn_start = value;
+  else if (field == "hat_u") k.hat_u = value;
+  else if (field == "hat_d") k.hat_d = value;
+  else if (field == "hat_l") k.hat_l = value;
+  else if (field == "hat_r") k.hat_r = value;
+  keys_.set_profile(profile_);
+}
+
+void AppState::push_toast(const std::string& title, const std::string& body) {
+  std::lock_guard lock(mu_);
+  toast_title_ = title;
+  toast_body_ = body;
+  toast_pending_ = true;
+}
+
+void AppState::test_door() {
+  if (profile_.disable_feedback) {
+    push_toast("toast_applied", "feedback disabled");
+    return;
+  }
+  mmf_.write_feedback(true, false, false);
+  test_frames_left_ = 45;
+  push_toast("toast_test_door", "MMF door=1");
+}
+
+void AppState::test_vib() {
+  if (profile_.disable_feedback) {
+    push_toast("toast_applied", "feedback disabled");
+    return;
+  }
+  mmf_.write_feedback(false, true, true);
+  test_frames_left_ = 45;
+  push_toast("toast_test_vib", "MMF vib L+R");
+}
+
+void AppState::test_off() {
+  mmf_.clear_feedback();
+  test_frames_left_ = 0;
+  push_toast("toast_test_off", "");
+}
+
+void AppState::probe_driver() {
+  const auto st = UsbType2::probe_driver(device_vidpid_needle(profile_.device_kind));
+  {
+    std::lock_guard lock(mu_);
+    live_.driver = st;
+    driver_prompt_ = (st == "needs_winusb");
+  }
+  if (st == "ok") push_toast("toast_driver_ok", st);
+  else if (st == "needs_winusb") push_toast("toast_driver_bad", "open Zadig");
+  else push_toast("toast_driver_bad", st);
+}
+
+void AppState::open_zadig() {
+  ShellExecuteW(hwnd_, L"open", L"https://zadig.akeo.ie/", nullptr, nullptr, SW_SHOWNORMAL);
+  push_toast("toast_applied", "Zadig");
+}
+
+void AppState::on_packet(const uint8_t* data, int len, double hz) {
+  ControllerState st;
+  {
+    std::lock_guard lock(mu_);
+    st = live_;
+  }
+  st.connected = true;
+  st.driver = "ok";
+  st.hz = hz;
+  decode_type2_packet(std::span<const uint8_t>(data, static_cast<size_t>(len)), calib_, st);
+  st.status = "live";
+  {
+    std::lock_guard lock(mu_);
+    live_ = st;
+  }
+}
+
+void AppState::on_usb_status(const std::string& s) {
+  std::lock_guard lock(mu_);
+  live_.status = s;
+  if (s == "needs_winusb") {
+    live_.driver = "needs_winusb";
+    live_.connected = false;
+    driver_prompt_ = true;
+    toast_title_ = "toast_driver_bad";
+    toast_body_ = s;
+    toast_pending_ = true;
+  } else if (s.find("not found") != std::string::npos || s.find("failed") != std::string::npos ||
+             s.find("disconnected") != std::string::npos) {
+    live_.connected = false;
+    if (s.find("not found") != std::string::npos) live_.driver = "missing";
+  }
+}
+
+std::string AppState::state_to_json(const ControllerState& st) const {
+  std::string status = st.status;
+  for (char& c : status) if (c == '"' || c == '\\') c = '\'';
+
+  std::ostringstream o;
+  o << "{\"type\":\"state\""
+    << ",\"connected\":" << (st.connected ? "true" : "false")
+    << ",\"status\":\"" << status << "\""
+    << ",\"driver\":\"" << st.driver << "\""
+    << ",\"hz\":" << st.hz
+    << ",\"hex\":\"" << hex_pkt(st) << "\""
+    << ",\"br\":" << (st.raw_len > 1 ? static_cast<int>(st.raw[1]) : -1)
+    << ",\"ms\":" << (st.raw_len > 2 ? static_cast<int>(st.raw[2]) : -1)
+    << ",\"pd\":" << (st.raw_len > 3 ? static_cast<int>(st.raw[3]) : -1)
+    << ",\"ht\":" << (st.raw_len > 4 ? static_cast<int>(st.raw[4]) : -1)
+    << ",\"bt\":" << (st.raw_len > 5 ? static_cast<int>(st.raw[5]) : -1)
+    << ",\"power\":" << st.power
+    << ",\"brake\":" << st.brake
+    << ",\"power_max\":" << st.power_max
+    << ",\"brake_max\":" << st.brake_max
+    << ",\"pedal\":" << (st.pedal ? "true" : "false")
+    << ",\"btn_a\":" << (st.btn_a ? "true" : "false")
+    << ",\"btn_b\":" << (st.btn_b ? "true" : "false")
+    << ",\"btn_c\":" << (st.btn_c ? "true" : "false")
+    << ",\"btn_d\":" << (st.btn_d ? "true" : "false")
+    << ",\"btn_select\":" << (st.btn_select ? "true" : "false")
+    << ",\"btn_start\":" << (st.btn_start ? "true" : "false")
+    << ",\"hat_u\":" << (st.hat_u ? "true" : "false")
+    << ",\"hat_d\":" << (st.hat_d ? "true" : "false")
+    << ",\"hat_l\":" << (st.hat_l ? "true" : "false")
+    << ",\"hat_r\":" << (st.hat_r ? "true" : "false")
+    << ",\"door\":" << (st.door_lamp ? "true" : "false")
+    << ",\"vib_l\":" << (st.vib_l ? "true" : "false")
+    << ",\"vib_r\":" << (st.vib_r ? "true" : "false")
+    << ",\"atc\":" << st.atc
+    << ",\"speed\":" << st.speed
+    << ",\"output\":" << (profile_.output_enabled ? "true" : "false")
+    << ",\"disable_feedback\":" << (profile_.disable_feedback ? "true" : "false")
+    << ",\"push\":\"" << (profile_.push == PushMode::Press ? "PRESS" : "CLICK") << "\""
+    << ",\"hold\":" << profile_.hold_interval_ms
+    << ",\"device_kind\":\"" << profile_.device_kind << "\""
+    << ",\"game_preset\":\"" << profile_.game_preset << "\""
+    << ",\"bits\":[";
+  for (size_t i = 0; i < st.bits.size(); ++i) {
+    if (i) o << ",";
+    o << (st.bits[i] ? "true" : "false");
+  }
+  o << "],\"keys\":{"
+    << "\"power_up\":\"" << profile_.keys.power_up << "\""
+    << ",\"power_down\":\"" << profile_.keys.power_down << "\""
+    << ",\"power_off\":\"" << profile_.keys.power_off << "\""
+    << ",\"brake_up\":\"" << profile_.keys.brake_up << "\""
+    << ",\"brake_down\":\"" << profile_.keys.brake_down << "\""
+    << ",\"brake_eb\":\"" << profile_.keys.brake_eb << "\""
+    << ",\"pedal\":\"" << profile_.keys.pedal << "\""
+    << ",\"btn_a\":\"" << profile_.keys.btn_a << "\""
+    << ",\"btn_b\":\"" << profile_.keys.btn_b << "\""
+    << ",\"btn_c\":\"" << profile_.keys.btn_c << "\""
+    << ",\"btn_d\":\"" << profile_.keys.btn_d << "\""
+    << ",\"btn_select\":\"" << profile_.keys.btn_select << "\""
+    << ",\"btn_start\":\"" << profile_.keys.btn_start << "\""
+    << ",\"hat_u\":\"" << profile_.keys.hat_u << "\""
+    << ",\"hat_d\":\"" << profile_.keys.hat_d << "\""
+    << ",\"hat_l\":\"" << profile_.keys.hat_l << "\""
+    << ",\"hat_r\":\"" << profile_.keys.hat_r << "\"";
+  o << "}";
+  if (toast_pending_) {
+    o << ",\"toast\":{\"title\":\"" << toast_title_ << "\",\"body\":\"" << toast_body_ << "\"}";
+  }
+  if (driver_prompt_) o << ",\"driver_prompt\":true";
+  o << "}";
+  return o.str();
+}
+
+void AppState::ui_tick() {
+  ControllerState st;
+  Profile p;
+  bool clear_toast = false;
+  bool clear_prompt = false;
+  {
+    std::lock_guard lock(mu_);
+    st = live_;
+    p = profile_;
+  }
+  if (mmf_.ok()) {
+    if (!p.disable_feedback) {
+      if (test_frames_left_ > 0) {
+        --test_frames_left_;
+        if (test_frames_left_ == 0) mmf_.clear_feedback();
+      }
+      mmf_.read_feedback(st);
+      if (st.connected) mmf_.write_notches(st.brake, st.power);
+    } else {
+      mmf_.clear_feedback();
+    }
+  }
+  keys_.set_profile(p);
+  keys_.tick(st);
+  {
+    std::lock_guard lock(mu_);
+    live_.door_lamp = st.door_lamp;
+    live_.vib_l = st.vib_l;
+    live_.vib_r = st.vib_r;
+    live_.atc = st.atc;
+    live_.speed = st.speed;
+    st = live_;
+    if (toast_pending_) clear_toast = true;
+    if (driver_prompt_) clear_prompt = true;
+  }
+  if (ui_push_) ui_push_(state_to_json(st));
+  if (clear_toast || clear_prompt) {
+    std::lock_guard lock(mu_);
+    if (clear_toast) toast_pending_ = false;
+    if (clear_prompt) driver_prompt_ = false;
+  }
+}

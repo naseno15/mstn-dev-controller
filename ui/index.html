@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="th" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>mstnDevController</title>
+  <link rel="stylesheet" href="material-icons.css" />
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body class="noselect">
+  <div class="bg-orbs" aria-hidden="true"></div>
+
+  <div id="toast" class="toast glass float" hidden>
+    <div class="toast-ico"><span class="material-icons" id="toastIcon">info</span></div>
+    <div>
+      <div id="toastTitle" class="toast-title"></div>
+      <div id="toastBody" class="toast-body"></div>
+    </div>
+  </div>
+
+  <div id="driverModal" class="modal" hidden>
+    <div class="modal-card glass raise">
+      <h2><span class="material-icons md-22">report_problem</span> <span data-i18n="driver_title">Driver required</span></h2>
+      <p data-i18n="driver_body">Type2 was detected but WinUSB is missing. Install with Zadig.</p>
+      <ol>
+        <li data-i18n="driver_step1">Open Zadig → Options → List All Devices</li>
+        <li data-i18n="driver_step2">Select TAITO_DENSYA_CON_T01 (0AE4:0004)</li>
+        <li data-i18n="driver_step3">Driver = WinUSB → Replace Driver</li>
+      </ol>
+      <div class="modal-actions">
+        <button type="button" id="btnOpenZadig" class="raise icon-btn" data-i18n-title="driver_open">
+          <span class="material-icons">open_in_new</span>
+          <span data-i18n="driver_open">Open Zadig site</span>
+        </button>
+        <button type="button" id="btnDriverClose" class="ghost icon-btn" data-i18n-title="close">
+          <span class="material-icons">close</span>
+          <span data-i18n="close">Close</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <header class="top glass float">
+    <div class="brand">
+      <span class="logo"><span class="material-icons">train</span></span>
+      <div>
+        <h1>DevController</h1>
+        <p class="sub" data-i18n="tagline">Densha de Go · train desk bridge</p>
+      </div>
+    </div>
+    <div class="top-tools">
+      <label class="chip sink" data-i18n-title="lang" title="Lang">
+        <span class="material-icons md-18">translate</span>
+        <select id="lang" aria-label="Language">
+          <option value="th">ไทย</option>
+          <option value="ja">日本語</option>
+          <option value="en">EN</option>
+        </select>
+      </label>
+      <button type="button" id="btnTheme" class="raise icon-only" data-i18n-title="theme">
+        <span class="material-icons" id="themeIcon">dark_mode</span>
+      </button>
+      <button type="button" id="btnLoad" class="raise icon-only" data-i18n-title="load">
+        <span class="material-icons">folder_open</span>
+      </button>
+      <button type="button" id="btnSave" class="raise primary icon-only" data-i18n-title="save">
+        <span class="material-icons">save</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="panel glass raise cfg">
+      <div class="field">
+        <label><span class="material-icons md-14">usb</span> <span data-i18n="device">Device</span></label>
+        <select id="deviceKind">
+          <option value="type2">PS2USB · Type2</option>
+          <option value="shinkansen">PS2USB · Shinkansen</option>
+          <option value="ryojou">PS2USB · Ryojou</option>
+          <option value="mtc">PS2USB · MTC</option>
+          <option value="keikyu">Keikyu Mascon</option>
+          <option value="zuiki">ZUIKI Mascon</option>
+          <option value="dinput">DirectInput pad</option>
+          <option value="xinput">XInput / JR unit</option>
+          <option value="dgoc44">DGOC-44</option>
+          <option value="drc184">DRC-184</option>
+        </select>
+      </div>
+      <div class="field">
+        <label><span class="material-icons md-14">sports_esports</span> <span data-i18n="preset">Game preset</span></label>
+        <select id="gamePreset">
+          <option value="bve6">BVE6</option>
+          <option value="openbve">OpenBVE</option>
+          <option value="jrets">JRETS</option>
+          <option value="traincrew">TRAIN CREW</option>
+          <option value="dengo">Densha de Go PC</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <div class="field">
+        <label><span class="material-icons md-14">keyboard</span> <span data-i18n="output">Output</span></label>
+        <select id="outMode">
+          <option value="keyboard" data-i18n="out_kb">Keyboard</option>
+        </select>
+      </div>
+      <div class="field">
+        <label><span class="material-icons md-14">touch_app</span> <span data-i18n="push">Push</span></label>
+        <select id="pushMode">
+          <option value="CLICK">CLICK</option>
+          <option value="PRESS">PRESS</option>
+        </select>
+      </div>
+      <div class="field narrow">
+        <label><span class="material-icons md-14">timer</span> <span data-i18n="hold">Hold ms</span></label>
+        <input id="holdMs" type="number" min="0" step="0.5" value="1" />
+      </div>
+      <label class="check sink" data-i18n-title="out_on">
+        <input type="checkbox" id="outEnable" checked />
+        <span class="material-icons md-18">publish</span>
+        <span data-i18n="out_on">Output on</span>
+      </label>
+      <label class="check sink" data-i18n-title="disable_fb">
+        <input type="checkbox" id="disableFb" />
+        <span class="material-icons md-18">block</span>
+        <span data-i18n="disable_fb">Disable feedback</span>
+      </label>
+      <button type="button" id="btnApply" class="raise icon-btn" data-i18n-title="apply">
+        <span class="material-icons">done</span>
+        <span data-i18n="apply">Apply</span>
+      </button>
+      <button type="button" id="btnStart" class="raise primary icon-btn" data-i18n-title="start">
+        <span class="material-icons">play_arrow</span>
+        <span data-i18n="start">Start</span>
+      </button>
+      <button type="button" id="btnStop" class="ghost icon-btn" data-i18n-title="stop">
+        <span class="material-icons">stop</span>
+        <span data-i18n="stop">Stop</span>
+      </button>
+    </section>
+
+    <div class="mid">
+      <section class="panel glass raise map">
+        <div class="panel-h">
+          <h2><span class="material-icons md-16">tune</span> <span data-i18n="keymap">Key map</span></h2>
+          <span class="hint" data-i18n="keymap_hint">Tune per preset · Save to keep</span>
+        </div>
+        <div class="keys" id="keyFields"></div>
+      </section>
+
+      <section class="panel glass raise mon">
+        <div class="panel-h">
+          <h2><span class="material-icons md-16">monitor</span> <span data-i18n="monitor">Monitor</span></h2>
+          <div id="conn" class="pill off">—</div>
+        </div>
+        <div class="mon-grid">
+          <div class="notches">
+            <div>
+              <div class="nl">
+                <span class="material-icons md-14">speed</span>
+                <span data-i18n="power">Power</span> <b id="powerVal">P0</b>
+              </div>
+              <div class="stack" id="powerStack"></div>
+            </div>
+            <div>
+              <div class="nl">
+                <span class="material-icons md-14">priority_high</span>
+                <span data-i18n="brake">Brake</span> <b id="brakeVal">N</b>
+              </div>
+              <div class="stack brake" id="brakeStack"></div>
+            </div>
+          </div>
+          <div class="bits-wrap">
+            <div class="bits" id="bitLamps"></div>
+            <div class="hat" id="hat">
+              <span data-k="hat_u" class="material-icons md-18">keyboard_arrow_up</span>
+              <span data-k="hat_l" class="material-icons md-18">keyboard_arrow_left</span>
+              <span data-k="hat_c" class="dot"></span>
+              <span data-k="hat_d" class="material-icons md-18">keyboard_arrow_down</span>
+              <span data-k="hat_r" class="material-icons md-18">keyboard_arrow_right</span>
+            </div>
+            <div class="faces" id="faces">
+              <span data-k="btn_a">A</span><span data-k="btn_b">B</span>
+              <span data-k="btn_c">C</span><span data-k="btn_d">D</span>
+              <span data-k="btn_select" title="Select"><span class="material-icons md-16">radio_button_checked</span></span>
+              <span data-k="btn_start" title="Start"><span class="material-icons md-16">play_circle</span></span>
+              <span data-k="pedal" class="wide"><span class="material-icons md-16">volume_up</span> PEDAL</span>
+            </div>
+          </div>
+          <div class="raw glass sink">
+            <div><span class="material-icons md-14">code</span> HEX <code id="hex">--</code></div>
+            <div><span>BR</span><code id="br">--</code> <span>MS</span><code id="ms">--</code></div>
+            <div><span>PD</span><code id="pd">--</code> <span>HT</span><code id="ht">--</code> <span>BT</span><code id="bt">--</code></div>
+            <div><span class="material-icons md-14">dialpad</span> DEC <code id="dec">--</code></div>
+            <div><span class="material-icons md-14">bolt</span> Hz <code id="hz">0</code> <span id="statusText" class="muted"></span></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel glass raise fb">
+      <div class="panel-h">
+        <h2><span class="material-icons md-16">settings_input_component</span> <span data-i18n="feedback">Feedback</span></h2>
+        <div class="fb-lamps">
+          <div class="lamp" id="door"><span class="material-icons md-16 ico">lightbulb</span><span data-i18n="door">Door</span></div>
+          <div class="lamp" id="vibl"><span class="material-icons md-16 ico">vibration</span><span>L</span></div>
+          <div class="lamp" id="vibr"><span class="material-icons md-16 ico">vibration</span><span>R</span></div>
+          <div class="meter"><span class="material-icons md-14">shield</span> ATC <b id="atc">0</b></div>
+          <div class="meter"><span class="material-icons md-14">speed</span> SPD <b id="speed">0</b></div>
+        </div>
+      </div>
+      <div class="fb-actions">
+        <button type="button" id="btnTestDoor" class="raise icon-btn" data-i18n-title="test_door">
+          <span class="material-icons">lightbulb</span>
+          <span data-i18n="test_door">Test door lamp</span>
+        </button>
+        <button type="button" id="btnTestVib" class="raise icon-btn" data-i18n-title="test_vib">
+          <span class="material-icons">vibration</span>
+          <span data-i18n="test_vib">Test vibration</span>
+        </button>
+        <button type="button" id="btnTestOff" class="ghost icon-btn" data-i18n-title="test_off">
+          <span class="material-icons">power_settings_new</span>
+          <span data-i18n="test_off">All off</span>
+        </button>
+        <button type="button" id="btnProbeDriver" class="raise icon-btn" data-i18n-title="probe_driver">
+          <span class="material-icons">usb</span>
+          <span data-i18n="probe_driver">Check driver</span>
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
