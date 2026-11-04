@@ -1,0 +1,13 @@
+# Copy default profiles only when missing — never overwrite user keymap saves.
+if(NOT DEFINED SRC OR NOT DEFINED DST)
+  message(FATAL_ERROR "seed_profiles.cmake needs -DSRC=... -DDST=...")
+endif()
+file(MAKE_DIRECTORY "${DST}")
+file(GLOB _profiles "${SRC}/*.json")
+foreach(_p IN LISTS _profiles)
+  get_filename_component(_name "${_p}" NAME)
+  set(_out "${DST}/${_name}")
+  if(NOT EXISTS "${_out}")
+    file(COPY "${_p}" DESTINATION "${DST}")
+  endif()
+endforeach()

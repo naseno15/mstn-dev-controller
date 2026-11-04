@@ -31,6 +31,8 @@ public:
   bool load_profile_path(const std::wstring& path, std::string& err);
   bool save_profile_path(const std::wstring& path, std::string& err);
   bool save_game_preset(const std::string& game, const std::string& device, std::string& err);
+  // Write active game/device preset to disk (no toast when quiet).
+  bool persist_active_profile(bool quiet = true);
 
   Profile& profile() { return profile_; }
   const Profile& profile() const { return profile_; }

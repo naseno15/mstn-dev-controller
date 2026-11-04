@@ -1,9 +1,16 @@
 cmake_minimum_required(VERSION 3.21)
-project(mstnDevController LANGUAGES CXX)
+project(mstnDevController VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+
+# Full static CRT (/MT) by default — no vcruntime/msvcp beside the exe.
+option(MSTN_STATIC "Static MSVC CRT + WebView2LoaderStatic (no Loader DLL)" ON)
+if(MSTN_STATIC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+else()
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
 
 # WebView2 native root (contains include/WebView2.h). Prefer vendored third_party.
 if(NOT DEFINED WEBVIEW2_ROOT OR WEBVIEW2_ROOT STREQUAL "")
@@ -29,6 +36,7 @@ if(NOT EXISTS "${WEBVIEW2_ROOT}/include/WebView2.h")
 endif()
 
 message(STATUS "WebView2: ${WEBVIEW2_ROOT}")
+message(STATUS "MSTN_STATIC: ${MSTN_STATIC}")
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
   set(_wv2_arch x64)
@@ -38,30 +46,43 @@ else()
   set(_wv2_rid win-x86)
 endif()
 
-# lib path variants across NuGet layouts
+# Prefer static loader when MSTN_STATIC; else import lib + copy DLL.
 set(_wv2_lib "")
-foreach(_cand
-    "${WEBVIEW2_ROOT}/${_wv2_arch}/WebView2Loader.dll.lib"
-    "${WEBVIEW2_ROOT}/lib/${_wv2_arch}/WebView2Loader.dll.lib")
-  if(EXISTS "${_cand}")
-    set(_wv2_lib "${_cand}")
-    break()
-  endif()
-endforeach()
-if(_wv2_lib STREQUAL "")
-  message(FATAL_ERROR "WebView2Loader.dll.lib not found under ${WEBVIEW2_ROOT}")
-endif()
-
 set(_wv2_dll "")
-foreach(_cand
-    "${WEBVIEW2_ROOT}/../../runtimes/${_wv2_rid}/native/WebView2Loader.dll"
-    "${WEBVIEW2_ROOT}/../../../runtimes/${_wv2_rid}/native/WebView2Loader.dll"
-    "${WEBVIEW2_ROOT}/${_wv2_arch}/WebView2Loader.dll")
-  if(EXISTS "${_cand}")
-    set(_wv2_dll "${_cand}")
-    break()
+if(MSTN_STATIC)
+  foreach(_cand
+      "${WEBVIEW2_ROOT}/${_wv2_arch}/WebView2LoaderStatic.lib"
+      "${WEBVIEW2_ROOT}/lib/${_wv2_arch}/WebView2LoaderStatic.lib")
+    if(EXISTS "${_cand}")
+      set(_wv2_lib "${_cand}")
+      break()
+    endif()
+  endforeach()
+  if(_wv2_lib STREQUAL "")
+    message(FATAL_ERROR "WebView2LoaderStatic.lib not found under ${WEBVIEW2_ROOT} (need MSTN_STATIC=OFF or fetch SDK)")
   endif()
-endforeach()
+else()
+  foreach(_cand
+      "${WEBVIEW2_ROOT}/${_wv2_arch}/WebView2Loader.dll.lib"
+      "${WEBVIEW2_ROOT}/lib/${_wv2_arch}/WebView2Loader.dll.lib")
+    if(EXISTS "${_cand}")
+      set(_wv2_lib "${_cand}")
+      break()
+    endif()
+  endforeach()
+  if(_wv2_lib STREQUAL "")
+    message(FATAL_ERROR "WebView2Loader.dll.lib not found under ${WEBVIEW2_ROOT}")
+  endif()
+  foreach(_cand
+      "${WEBVIEW2_ROOT}/../../runtimes/${_wv2_rid}/native/WebView2Loader.dll"
+      "${WEBVIEW2_ROOT}/../../../runtimes/${_wv2_rid}/native/WebView2Loader.dll"
+      "${WEBVIEW2_ROOT}/${_wv2_arch}/WebView2Loader.dll")
+    if(EXISTS "${_cand}")
+      set(_wv2_dll "${_cand}")
+      break()
+    endif()
+  endforeach()
+endif()
 
 add_executable(mstnDevController WIN32
   src/main.cpp
@@ -80,7 +101,10 @@ target_include_directories(mstnDevController PRIVATE
   "${WEBVIEW2_ROOT}/include"
 )
 
-target_compile_definitions(mstnDevController PRIVATE UNICODE _UNICODE NOMINMAX)
+target_compile_definitions(mstnDevController PRIVATE
+  UNICODE _UNICODE NOMINMAX
+  MSTN_VERSION_STR="${PROJECT_VERSION}"
+)
 target_compile_options(mstnDevController PRIVATE /W3 /EHsc /utf-8)
 
 target_link_libraries(mstnDevController PRIVATE
@@ -93,14 +117,17 @@ target_link_libraries(mstnDevController PRIVATE
   shlwapi
   shell32
   comdlg32
+  version
   "${_wv2_lib}"
 )
 
 add_custom_command(TARGET mstnDevController POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_SOURCE_DIR}/ui" "$<TARGET_FILE_DIR:mstnDevController>/ui"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/profiles" "$<TARGET_FILE_DIR:mstnDevController>/profiles"
+  COMMAND ${CMAKE_COMMAND}
+    -DSRC=${CMAKE_SOURCE_DIR}/profiles
+    -DDST=$<TARGET_FILE_DIR:mstnDevController>/profiles
+    -P ${CMAKE_SOURCE_DIR}/scripts/seed_profiles.cmake
   COMMAND ${CMAKE_COMMAND} -E make_directory
     "$<TARGET_FILE_DIR:mstnDevController>/ui/fonts"
 )

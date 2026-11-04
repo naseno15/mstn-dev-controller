@@ -18,26 +18,26 @@ Win32 + **WebView2** (offline HTML glass UI) for Densha de Go / train desk contr
 - CMake ≥ 3.21, MSVC (VS 2022), Ninja optional
 - Close **denconv** before Start USB (exclusive WinUSB handle)
 
-## Build
+## Build (static by default)
+
+Static **MSVC `/MT`** + **`WebView2LoaderStatic.lib`** — no `vcruntime*.dll` / `WebView2Loader.dll` next to the exe. Target PC still needs [WebView2 Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (usually already present with Edge).
 
 ```powershell
-cd C:\Users\Naito\Desktop\BveTs\mstn-dev-controller
+cd mstn-dev-controller
 powershell -ExecutionPolicy Bypass -File .\scripts\fetch-webview2.ps1
-cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-.\build\check_decode.exe
-.\build\mstnDevController.exe
-```
-
-Visual Studio generator:
-
-```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DMSTN_STATIC=ON
 cmake --build build --config Release
 .\build\Release\mstnDevController.exe
 ```
 
-Dynamic CRT + `WebView2Loader.dll` beside the exe — **no static link**.
+Package a portable zip:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.0.0
+# → out\mstnDevController-1.0.0-win-x64.zip
+```
+
+Dynamic CRT + Loader DLL (optional): `-DMSTN_STATIC=OFF`.
 
 ## Profiles
 

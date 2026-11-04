@@ -2,29 +2,56 @@
 
 namespace {
 
+bool is_extended_vk(WORD vk) {
+  return vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT ||
+         vk == VK_INSERT || vk == VK_DELETE || vk == VK_HOME || vk == VK_END ||
+         vk == VK_PRIOR || vk == VK_NEXT || vk == VK_RCONTROL || vk == VK_RMENU ||
+         vk == VK_NUMLOCK || vk == VK_DIVIDE || vk == VK_RSHIFT;
+}
+
 void send_vk(WORD vk, bool down) {
   if (!vk) return;
   INPUT in{};
   in.type = INPUT_KEYBOARD;
   in.ki.wVk = vk;
   in.ki.wScan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
-  in.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
-  // Extended keys (arrows etc.)
-  if (vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT ||
-      vk == VK_INSERT || vk == VK_DELETE || vk == VK_HOME || vk == VK_END ||
-      vk == VK_PRIOR || vk == VK_NEXT || vk == VK_RCONTROL || vk == VK_RMENU || vk == VK_NUMLOCK) {
-    in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
-  }
+  in.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
+  if (is_extended_vk(vk)) in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
   SendInput(1, &in, sizeof(INPUT));
 }
 
 } // namespace
 
-void KeyboardOut::tap(WORD vk) {
+bool KeyboardOut::should_block_inject() const {
+  // Never inject into our own process (main window OR WebView2 child focus).
+  HWND fg = GetForegroundWindow();
+  if (!fg) return false;
+  DWORD pid = 0;
+  GetWindowThreadProcessId(fg, &pid);
+  if (pid == GetCurrentProcessId()) return true;
+  if (ignore_hwnd_ && fg == ignore_hwnd_) return true;
+  return false;
+}
+
+void KeyboardOut::flush_pending_ups() {
+  if (pending_ups_.empty()) return;
+  const ULONGLONG now = GetTickCount64();
+  size_t w = 0;
+  for (size_t i = 0; i < pending_ups_.size(); ++i) {
+    if (now >= pending_ups_[i].due_ms) {
+      send_vk(pending_ups_[i].vk, false);
+    } else {
+      pending_ups_[w++] = pending_ups_[i];
+    }
+  }
+  pending_ups_.resize(w);
+}
+
+void KeyboardOut::tap(WORD vk, DWORD hold_ms) {
   if (!vk) return;
   send_vk(vk, true);
-  Sleep(static_cast<DWORD>(profile_.hold_interval_ms > 0 ? profile_.hold_interval_ms : 1));
-  send_vk(vk, false);
+  const DWORD ms = hold_ms > 0 ? hold_ms : 50;
+  pending_ups_.push_back(PendingUp{vk, GetTickCount64() + ms});
 }
 
 void KeyboardOut::set_down(WORD vk, bool down) {
@@ -33,109 +60,160 @@ void KeyboardOut::set_down(WORD vk, bool down) {
 }
 
 void KeyboardOut::release_all() {
+  for (const auto& p : pending_ups_) send_vk(p.vk, false);
+  pending_ups_.clear();
   if (held_pedal_) {
     set_down(vk_from_name(profile_.keys.pedal), false);
     held_pedal_ = false;
+  }
+  for (WORD& vk : held_btn_vk_) {
+    if (vk) {
+      set_down(vk, false);
+      vk = 0;
+    }
   }
   last_pedal_ = last_a_ = last_b_ = last_c_ = last_d_ = false;
   last_sel_ = last_start_ = false;
   last_hu_ = last_hd_ = last_hl_ = last_hr_ = false;
 }
 
-void KeyboardOut::step_axis(int& cur, int target, WORD up_vk, WORD down_vk, WORD extra_vk, bool extra_at_max) {
-  if (cur == target) return;
+bool KeyboardOut::step_gate() {
   const ULONGLONG now = GetTickCount64();
-  if (now - last_step_ms_ < static_cast<ULONGLONG>(profile_.hold_interval_ms)) return;
+  const ULONGLONG gap = static_cast<ULONGLONG>(
+      profile_.hold_interval_ms > 0 ? profile_.hold_interval_ms : 1.0);
+  if (now - last_step_ms_ < gap) return false;
   last_step_ms_ = now;
+  return true;
+}
 
-  if (extra_at_max && target > cur && cur == profile_.brake_steps && extra_vk) {
-    // approaching EB from B8
-    tap(extra_vk);
-    cur = target;
-    return;
-  }
+void KeyboardOut::step_axis(int& cur, int target, WORD up_vk, WORD down_vk) {
+  if (cur == target) return;
+  if (!step_gate()) return;
   if (target > cur) {
-    tap(up_vk);
+    tap(up_vk, 40);
     ++cur;
   } else {
-    tap(down_vk);
+    tap(down_vk, 40);
     --cur;
   }
 }
 
 void KeyboardOut::tick(const ControllerState& st) {
+  flush_pending_ups();
   if (!profile_.output_enabled || !st.connected) return;
-  if (ignore_hwnd_ && GetForegroundWindow() == ignore_hwnd_) return;
+  if (should_block_inject()) return;
 
-  // Power 0..power_max — BVE uses step up/down + off
   const WORD p_up = vk_from_name(profile_.keys.power_up);
   const WORD p_dn = vk_from_name(profile_.keys.power_down);
   const WORD p_off = vk_from_name(profile_.keys.power_off);
-  if (st.power == 0 && cur_power_ != 0) {
-    const ULONGLONG now = GetTickCount64();
-    if (now - last_step_ms_ >= static_cast<ULONGLONG>(profile_.hold_interval_ms)) {
-      tap(p_off);
-      cur_power_ = 0;
-      last_step_ms_ = now;
-    }
-  } else if (st.power != cur_power_) {
-    step_axis(cur_power_, st.power, p_up, p_dn, 0, false);
+  const int pmax = st.power_max > 0 ? st.power_max : profile_.power_steps;
+  const int pt = st.power;
+
+  // Re-arm end-stop overshoot whenever the handle commands a new extreme.
+  if (pt != power_cmd_) {
+    power_cmd_ = pt;
+    if (pt == 0 || pt == pmax) power_overshoot_ = kExtremeOvershoot;
+    else power_overshoot_ = 0;
   }
 
-  // Brake 0=N .. brake_max-1=Bmax, brake_max=EB (our decode uses 9=EB with max 9)
+  if (pt == 0) {
+    // Prefer Power Off key, then keep beating it so many-step packs actually hit N.
+    if (cur_power_ != 0) {
+      if (step_gate()) {
+        tap(p_off ? p_off : p_dn, 40);
+        cur_power_ = 0;
+      }
+    } else if (power_overshoot_ > 0 && step_gate()) {
+      tap(p_off ? p_off : p_dn, 40);
+      --power_overshoot_;
+    }
+  } else if (cur_power_ != pt) {
+    step_axis(cur_power_, pt, p_up, p_dn);
+  } else if (pt == pmax && power_overshoot_ > 0 && step_gate()) {
+    tap(p_up, 40);
+    --power_overshoot_;
+  }
+
   const WORD b_up = vk_from_name(profile_.keys.brake_up);
   const WORD b_dn = vk_from_name(profile_.keys.brake_down);
   const WORD b_eb = vk_from_name(profile_.keys.brake_eb);
-  const int eb_idx = st.brake_max; // last index = EB
-  if (st.brake == eb_idx) {
-    if (cur_brake_ != eb_idx) {
-      const ULONGLONG now = GetTickCount64();
-      if (now - last_step_ms_ >= static_cast<ULONGLONG>(profile_.hold_interval_ms)) {
-        tap(b_eb);
-        cur_brake_ = eb_idx;
-        last_step_ms_ = now;
-      }
-    }
-  } else if (st.brake != cur_brake_) {
-    if (cur_brake_ == eb_idx) {
-      // leave EB via brake_down toward B8
-      step_axis(cur_brake_, st.brake, b_up, b_dn, 0, false);
-      if (cur_brake_ == eb_idx) cur_brake_ = eb_idx - 1;
-    } else {
-      step_axis(cur_brake_, st.brake, b_up, b_dn, 0, false);
-    }
+  const int eb_idx = st.brake_max > 0 ? st.brake_max : (profile_.brake_steps + 1);
+  const int bt = st.brake;
+
+  if (bt != brake_cmd_) {
+    brake_cmd_ = bt;
+    if (bt == 0 || bt == eb_idx) brake_overshoot_ = kExtremeOvershoot;
+    else brake_overshoot_ = 0;
   }
 
-  auto edge_btn = [&](bool now, bool& last, const std::string& key) {
+  if (bt == eb_idx) {
+    if (cur_brake_ != eb_idx) {
+      if (step_gate()) {
+        tap(b_eb ? b_eb : b_up, 40);
+        cur_brake_ = eb_idx;
+      }
+    } else if (brake_overshoot_ > 0 && step_gate()) {
+      tap(b_eb ? b_eb : b_up, 40);
+      --brake_overshoot_;
+    }
+  } else if (cur_brake_ != bt) {
+    if (cur_brake_ == eb_idx) {
+      // Leaving EB: one release step then continue toward target.
+      if (step_gate()) {
+        tap(b_dn, 40);
+        cur_brake_ = eb_idx - 1;
+      }
+    } else {
+      step_axis(cur_brake_, bt, b_up, b_dn);
+    }
+  } else if (bt == 0 && brake_overshoot_ > 0 && step_gate()) {
+    // Released — extra B− so a 8/10-step vehicle is fully off for sure.
+    tap(b_dn, 40);
+    --brake_overshoot_;
+  }
+
+  constexpr DWORD kBtnTapMs = 50;
+
+  auto edge_btn = [&](bool now, bool& last, const std::string& key, WORD& held_slot) {
     const WORD vk = vk_from_name(key);
     if (!vk) {
+      if (held_slot) {
+        set_down(held_slot, false);
+        held_slot = 0;
+      }
       last = now;
       return;
     }
     if (profile_.push == PushMode::Click) {
-      if (now && !last) tap(vk);
+      if (held_slot) {
+        set_down(held_slot, false);
+        held_slot = 0;
+      }
+      if (now && !last) tap(vk, kBtnTapMs);
     } else {
-      if (now != last) set_down(vk, now);
+      if (now != last) {
+        set_down(vk, now);
+        held_slot = now ? vk : 0;
+      }
     }
     last = now;
   };
 
-  edge_btn(st.btn_a, last_a_, profile_.keys.btn_a);
-  edge_btn(st.btn_b, last_b_, profile_.keys.btn_b);
-  edge_btn(st.btn_c, last_c_, profile_.keys.btn_c);
-  edge_btn(st.btn_d, last_d_, profile_.keys.btn_d);
-  edge_btn(st.btn_select, last_sel_, profile_.keys.btn_select);
-  edge_btn(st.btn_start, last_start_, profile_.keys.btn_start);
-  edge_btn(st.hat_u, last_hu_, profile_.keys.hat_u);
-  edge_btn(st.hat_d, last_hd_, profile_.keys.hat_d);
-  edge_btn(st.hat_l, last_hl_, profile_.keys.hat_l);
-  edge_btn(st.hat_r, last_hr_, profile_.keys.hat_r);
+  edge_btn(st.btn_a, last_a_, profile_.keys.btn_a, held_btn_vk_[0]);
+  edge_btn(st.btn_b, last_b_, profile_.keys.btn_b, held_btn_vk_[1]);
+  edge_btn(st.btn_c, last_c_, profile_.keys.btn_c, held_btn_vk_[2]);
+  edge_btn(st.btn_d, last_d_, profile_.keys.btn_d, held_btn_vk_[3]);
+  edge_btn(st.btn_select, last_sel_, profile_.keys.btn_select, held_btn_vk_[4]);
+  edge_btn(st.btn_start, last_start_, profile_.keys.btn_start, held_btn_vk_[5]);
+  edge_btn(st.hat_u, last_hu_, profile_.keys.hat_u, held_btn_vk_[6]);
+  edge_btn(st.hat_d, last_hd_, profile_.keys.hat_d, held_btn_vk_[7]);
+  edge_btn(st.hat_l, last_hl_, profile_.keys.hat_l, held_btn_vk_[8]);
+  edge_btn(st.hat_r, last_hr_, profile_.keys.hat_r, held_btn_vk_[9]);
 
-  // Pedal: hold while down (horn)
   const WORD ped = vk_from_name(profile_.keys.pedal);
   if (st.pedal != last_pedal_) {
     if (profile_.push == PushMode::Click && st.pedal) {
-      tap(ped);
+      tap(ped, kBtnTapMs);
     } else {
       set_down(ped, st.pedal);
       held_pedal_ = st.pedal;

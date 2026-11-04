@@ -77,6 +77,13 @@ void UsbType2::abort_io() {
 }
 
 void UsbType2::start() {
+  // Previous search may have ended (missing device) with running_=false but
+  // th_ still joinable — assigning a new thread without join → std::terminate.
+  if (th_.joinable()) {
+    stop_ = true;
+    abort_io();
+    th_.join();
+  }
   if (running_.exchange(true)) return;
   stop_ = false;
   th_ = std::thread([this] { thread_main(); });

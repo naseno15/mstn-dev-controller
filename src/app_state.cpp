@@ -69,13 +69,54 @@ std::wstring AppState::preset_path_for(const std::string& game, const std::strin
 }
 
 void AppState::start_usb() {
-  usb_.set_needle(device_vidpid_needle(profile_.device_kind));
+  const std::string kind = profile_.device_kind;
+  usb_.set_needle(device_vidpid_needle(kind));
+
+  // Preflight so UI tells the user why Start will fail — then still start search thread.
+  const auto st = UsbType2::probe_driver(device_vidpid_needle(kind));
+  if (st == "missing") {
+    push_toast("toast_driver_missing", "เสียบ Type2 แล้วกดเริ่มอีกครั้ง");
+  } else if (st == "busy") {
+    push_toast("toast_driver_busy", "ปิด denconv / แอปอื่นที่จับจอยอยู่");
+  } else if (st == "needs_winusb") {
+    push_toast("toast_driver_bad", "Zadig → เลือก WinUSB");
+  } else if (st.rfind("wrong_driver:", 0) == 0) {
+    push_toast("toast_driver_wrong", st.substr(13) + " → เปลี่ยนเป็น WinUSB");
+  } else if (st == "ok") {
+    push_toast("toast_started", kind);
+  } else {
+    push_toast("toast_started", kind + " · " + st);
+  }
+
+  {
+    std::lock_guard lock(mu_);
+    if (st == "missing") {
+      live_.status = "missing";
+      live_.driver = "missing";
+      live_.connected = false;
+    } else if (st == "needs_winusb" || st.rfind("wrong_driver", 0) == 0) {
+      live_.status = "needs_winusb";
+      live_.driver = "needs_winusb";
+      live_.connected = false;
+      driver_prompt_ = true;
+    } else if (st == "busy") {
+      live_.status = "busy";
+      live_.connected = false;
+    } else {
+      live_.status = "searching";
+    }
+  }
+
   usb_.start();
-  push_toast("toast_started", profile_.device_kind);
 }
 
 void AppState::stop_usb() {
   usb_.stop();
+  {
+    std::lock_guard lock(mu_);
+    live_.status = "idle";
+    live_.connected = false;
+  }
   push_toast("toast_stopped", "");
 }
 
@@ -100,6 +141,25 @@ bool AppState::save_profile_path(const std::wstring& path, std::string& err) {
     ok = ::save_profile(path, profile_, err);
   }
   if (ok) push_toast("toast_saved", "");
+  return ok;
+}
+
+bool AppState::persist_active_profile(bool quiet) {
+  std::string game, device;
+  Profile snap;
+  {
+    std::lock_guard lock(mu_);
+    game = profile_.game_preset;
+    device = profile_.device_kind;
+    snap = profile_;
+  }
+  if (game.empty()) game = "bve6";
+  if (device.empty()) device = "type2";
+  CreateDirectoryW((exe_dir_ + L"\\profiles").c_str(), nullptr);
+  const auto path = preset_path_for(game, device);
+  std::string err;
+  const bool ok = ::save_profile(path, snap, err);
+  if (ok && !quiet) push_toast("toast_saved", "");
   return ok;
 }
 
@@ -133,30 +193,35 @@ void AppState::apply_output_settings(bool enabled, const std::string& push, doub
   }
   usb_.set_needle(device_vidpid_needle(to_dev));
   if (disable_fb) mmf_.clear_feedback();
+  persist_active_profile(true);
   push_toast("toast_applied", from_dev + " → " + to_dev);
 }
 
 void AppState::apply_keymap_field(const std::string& field, const std::string& value) {
-  std::lock_guard lock(mu_);
-  auto& k = profile_.keys;
-  if (field == "power_up") k.power_up = value;
-  else if (field == "power_down") k.power_down = value;
-  else if (field == "power_off") k.power_off = value;
-  else if (field == "brake_up") k.brake_up = value;
-  else if (field == "brake_down") k.brake_down = value;
-  else if (field == "brake_eb") k.brake_eb = value;
-  else if (field == "pedal") k.pedal = value;
-  else if (field == "btn_a") k.btn_a = value;
-  else if (field == "btn_b") k.btn_b = value;
-  else if (field == "btn_c") k.btn_c = value;
-  else if (field == "btn_d") k.btn_d = value;
-  else if (field == "btn_select") k.btn_select = value;
-  else if (field == "btn_start") k.btn_start = value;
-  else if (field == "hat_u") k.hat_u = value;
-  else if (field == "hat_d") k.hat_d = value;
-  else if (field == "hat_l") k.hat_l = value;
-  else if (field == "hat_r") k.hat_r = value;
-  keys_.set_profile(profile_);
+  {
+    std::lock_guard lock(mu_);
+    auto& k = profile_.keys;
+    if (field == "power_up") k.power_up = value;
+    else if (field == "power_down") k.power_down = value;
+    else if (field == "power_off") k.power_off = value;
+    else if (field == "brake_up") k.brake_up = value;
+    else if (field == "brake_down") k.brake_down = value;
+    else if (field == "brake_eb") k.brake_eb = value;
+    else if (field == "pedal") k.pedal = value;
+    else if (field == "btn_a") k.btn_a = value;
+    else if (field == "btn_b") k.btn_b = value;
+    else if (field == "btn_c") k.btn_c = value;
+    else if (field == "btn_d") k.btn_d = value;
+    else if (field == "btn_select") k.btn_select = value;
+    else if (field == "btn_start") k.btn_start = value;
+    else if (field == "hat_u") k.hat_u = value;
+    else if (field == "hat_d") k.hat_d = value;
+    else if (field == "hat_l") k.hat_l = value;
+    else if (field == "hat_r") k.hat_r = value;
+    keys_.set_profile(profile_);
+  }
+  // Remap must survive restart / rebuild — don't wait for Save click.
+  persist_active_profile(true);
 }
 
 void AppState::push_toast(const std::string& title, const std::string& body) {
@@ -317,9 +382,15 @@ void AppState::on_usb_status(const std::string& s) {
     live_.status = "missing";
     live_.connected = false;
     live_.driver = "missing";
+    toast_title_ = "toast_driver_missing";
+    toast_body_ = "ไม่พบ Type2 — ตรวจสาย / เสียบใหม่";
+    toast_pending_ = true;
   } else if (s == "busy" || s.find("busy") != std::string::npos || s.find("failed") != std::string::npos) {
     live_.status = "busy";
     live_.connected = false;
+    toast_title_ = "toast_driver_busy";
+    toast_body_ = "จอยถูกโปรแกรมอื่นใช้อยู่";
+    toast_pending_ = true;
   } else if (s.find("disconnected") != std::string::npos) {
     live_.status = "idle";
     live_.connected = false;

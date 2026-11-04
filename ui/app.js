@@ -44,6 +44,9 @@
   let lastKeys = {};
   let mapField = null;
   let mapListen = false;
+  // Live state ticks were resetting push/hold/device every frame → PRESS couldn't stick.
+  let settingsSynced = false;
+  let settingsDirty = false;
 
   const FIELD_LABEL = Object.fromEntries(KEY_FIELDS.map(([id, label]) => [id, label]));
   const AXIS_GROUPS = {
@@ -69,10 +72,11 @@
       ["DELETE", "Delete"],
       ["HOME", "Home"],
       ["END", "End"],
-      ["PRIOR", "PageUp"],
-      ["NEXT", "PageDown"],
+      ["PRIOR", "PageUp (PgUp)"],
+      ["NEXT", "PageDown (PgDn)"],
       ["ESCAPE", "Esc"],
       ["TAB", "Tab"],
+      ["BACK", "Backspace"],
       ["OEM_1", ";"],
       ["OEM_4", "["],
       ["OEM_6", "]"],
@@ -94,6 +98,7 @@
     const key = e.key || "";
     if (key === " " || code === "Space") return "SPACE";
     if (key === "Enter" || code === "Enter" || code === "NumpadEnter") return "RETURN";
+    if (key === "Backspace" || code === "Backspace") return "BACK";
     if (key === "ArrowUp" || code === "ArrowUp") return "UP";
     if (key === "ArrowDown" || code === "ArrowDown") return "DOWN";
     if (key === "ArrowLeft" || code === "ArrowLeft") return "LEFT";
@@ -102,9 +107,21 @@
     if (key === "Delete" || code === "Delete") return "DELETE";
     if (key === "Home" || code === "Home") return "HOME";
     if (key === "End" || code === "End") return "END";
+    if (key === "PageUp" || code === "PageUp") return "PRIOR";
+    if (key === "PageDown" || code === "PageDown") return "NEXT";
+    if (key === "Tab" || code === "Tab") return "TAB";
+    if (key === "Escape" || code === "Escape") return "ESCAPE";
+    if (code.startsWith("Numpad") && code.length === 7 && /[0-9]/.test(code.slice(6))) return code.slice(6);
     if (key === "." || code === "Period" || code === "NumpadDecimal") return "OEM_PERIOD";
     if (key === "," || code === "Comma") return "OEM_COMMA";
     if (key === "/" || code === "Slash") return "OEM_2";
+    if (key === ";" || code === "Semicolon") return "OEM_1";
+    if (key === "[" || code === "BracketLeft") return "OEM_4";
+    if (key === "]" || code === "BracketRight") return "OEM_6";
+    if (key === "\\" || code === "Backslash") return "OEM_5";
+    if (key === "'" || code === "Quote") return "OEM_7";
+    if (key === "-" || code === "Minus") return "OEM_MINUS";
+    if (key === "=" || code === "Equal") return "OEM_PLUS";
     if (key === "+" || code === "NumpadAdd") return "ADD";
     if (/^[a-zA-Z]$/.test(key)) return key.toUpperCase();
     if (/^[0-9]$/.test(key)) return key;
@@ -118,7 +135,7 @@
     const from = lastKeys[field] || "";
     lastKeys[field] = value;
     post({ type: "cmd", cmd: "set_key", field, value });
-    toast("toast_applied", `${label}: ${from || "∅"} → ${value || "∅"}`);
+    toast("toast_applied", `${label}: ${shortKey(from)} → ${shortKey(value)}`);
     refreshMonitorKeyTips();
   }
 
@@ -154,11 +171,17 @@
     if (sel.dataset.enhanced === "1") syncCustomSelect(sel);
   }
 
-  function setMapDraft(value) {
+  function setMapDraft(value, syncSelect) {
     mapDraft = value || "";
     const keyEl = $("mapPopKey");
-    if (keyEl) keyEl.textContent = shortKey(mapDraft) || "∅";
-    fillMapSelect(mapDraft);
+    if (keyEl) keyEl.textContent = shortKey(mapDraft);
+    if (syncSelect !== false) fillMapSelect(mapDraft);
+  }
+
+  function commitMap(value) {
+    if (!mapField) return;
+    applyKeyMap(mapField, value || "");
+    closeMapPop();
   }
 
   function positionMapPop(anchor) {
@@ -234,12 +257,25 @@
   }
 
   function shortKey(name) {
-    if (!name) return "∅";
+    if (!name) return "—";
     if (name === "OEM_PERIOD") return ".";
     if (name === "OEM_COMMA") return ",";
     if (name === "OEM_2") return "/";
-    if (name === "RETURN") return "↵";
-    if (name === "SPACE") return "␣";
+    if (name === "OEM_1") return ";";
+    if (name === "OEM_4") return "[";
+    if (name === "OEM_6") return "]";
+    if (name === "OEM_5") return "\\";
+    if (name === "OEM_7") return "'";
+    if (name === "OEM_MINUS") return "-";
+    if (name === "OEM_PLUS") return "=";
+    if (name === "RETURN") return "Enter";
+    if (name === "SPACE") return "Space";
+    if (name === "PRIOR" || name === "PAGEUP") return "PgUp";
+    if (name === "NEXT" || name === "PAGEDOWN") return "PgDn";
+    if (name === "ESCAPE") return "Esc";
+    if (name === "BACK" || name === "BACKSPACE") return "Bksp";
+    if (name === "INSERT") return "Ins";
+    if (name === "DELETE") return "Del";
     if (name === "UP") return "↑";
     if (name === "DOWN") return "↓";
     if (name === "LEFT") return "←";
@@ -253,7 +289,7 @@
       if (!k) return;
       const label = FIELD_LABEL[k] || k;
       const key = lastKeys[k] || "";
-      el.title = `${label} → ${key || "∅"}`;
+      el.title = `${label} → ${shortKey(key)}`;
       el.classList.add("map-hit");
       el.classList.toggle("empty-map", !key);
       const chip = el.querySelector(":scope > .key-chip");
@@ -271,7 +307,7 @@
         row.dataset.mapField = field;
         const key = lastKeys[field] || "";
         row.innerHTML = `<span class="axis-tag">${label}</span><span class="keycap">${shortKey(key)}</span>`;
-        row.title = `${label} → ${key || "∅"}`;
+        row.title = `${label} → ${shortKey(key)}`;
         row.onclick = (e) => {
           e.stopPropagation();
           openMapField(field, row);
@@ -603,19 +639,27 @@
     $("atc").textContent = st.atc ?? 0;
     $("speed").textContent = st.speed ?? 0;
 
-    if (typeof st.output === "boolean") $("outEnable").checked = st.output;
-    if (typeof st.disable_feedback === "boolean") $("disableFb").checked = st.disable_feedback;
-    if (st.push) setSelectValue("pushMode", st.push);
-    if (typeof st.hold === "number") $("holdMs").value = st.hold;
-    if (st.device_kind) setSelectValue("deviceKind", st.device_kind);
-    if (st.game_preset) setSelectValue("gamePreset", st.game_preset);
+    const toastTitle = st.toast && st.toast.title;
+    if (toastTitle === "toast_loaded" || toastTitle === "toast_saved" || toastTitle === "toast_applied") {
+      settingsDirty = false;
+      settingsSynced = false;
+    }
+    if (!settingsDirty && !settingsSynced) {
+      if (typeof st.output === "boolean") $("outEnable").checked = st.output;
+      if (typeof st.disable_feedback === "boolean") $("disableFb").checked = st.disable_feedback;
+      if (st.push) setSelectValue("pushMode", st.push);
+      if (typeof st.hold === "number") $("holdMs").value = st.hold;
+      if (st.device_kind) setSelectValue("deviceKind", st.device_kind);
+      if (st.game_preset) setSelectValue("gamePreset", st.game_preset);
+      settingsSynced = true;
+    }
 
     if (st.keys) {
       for (const [id] of KEY_FIELDS) {
         if (typeof st.keys[id] === "string") lastKeys[id] = st.keys[id];
       }
       refreshMonitorKeyTips();
-      if (mapField && mapListen) setMapDraft(lastKeys[mapField] || "");
+      // Don't overwrite in-progress remap draft — state ticks were wiping dropdown picks.
     }
   }
 
@@ -630,9 +674,15 @@
   refreshMonitorKeyTips();
 
   document.addEventListener("click", (e) => {
-    closeAllSelects();
+    const inSelectMenu = !!(e.target.closest && e.target.closest(".cselect-menu, .cselect-btn"));
+    if (!inSelectMenu) closeAllSelects();
     const pop = $("mapPop");
-    if (pop && !pop.hidden && !pop.contains(e.target) && !e.target.closest(".map-hit")) {
+    if (
+      pop && !pop.hidden &&
+      !pop.contains(e.target) &&
+      !e.target.closest(".map-hit") &&
+      !e.target.closest(".cselect-menu")
+    ) {
       closeMapPop();
     }
   });
@@ -660,47 +710,42 @@
     closeMapPop();
   };
   $("mapPop").addEventListener("click", (e) => e.stopPropagation());
+  // Dropdown pick → apply immediately (same as pressing a key)
   $("mapPopSelect").onchange = () => {
     if (!mapListen || !mapField) return;
-    setMapDraft($("mapPopSelect").value || "");
+    const v = $("mapPopSelect").value || "";
+    setMapDraft(v, false);
+    commitMap(v);
   };
   $("mapPopClear").onclick = (e) => {
     e.stopPropagation();
-    if (!mapField) return;
-    applyKeyMap(mapField, "");
-    setMapDraft("");
+    commitMap("");
   };
   $("mapPopApply").onclick = (e) => {
     e.stopPropagation();
+    e.preventDefault();
     if (!mapField) return;
-    applyKeyMap(mapField, mapDraft || "");
-    closeMapPop();
+    const fromSelect = ($("mapPopSelect") && $("mapPopSelect").value) || "";
+    commitMap(mapDraft || fromSelect || "");
   };
 
   document.addEventListener("keydown", (e) => {
     if (!mapListen || !mapField) return;
-    const tag = (e.target && e.target.tagName) || "";
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-    // ignore while using custom select menu
     if (e.target && e.target.closest && e.target.closest(".cselect-menu, .cselect-btn")) return;
-    e.preventDefault();
-    e.stopPropagation();
+    const tag = (e.target && e.target.tagName) || "";
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    // Esc only cancels — Clear/Apply are UI buttons. Enter/Backspace/Delete map as real keys.
     if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
       closeMapPop();
-      return;
-    }
-    if (e.key === "Enter") {
-      applyKeyMap(mapField, mapDraft || "");
-      closeMapPop();
-      return;
-    }
-    if (e.key === "Backspace" || e.key === "Delete") {
-      setMapDraft("");
       return;
     }
     const name = keyEventToName(e);
     if (!name) return;
-    setMapDraft(name);
+    e.preventDefault();
+    e.stopPropagation();
+    commitMap(name);
   }, true);
 
   $("lang").onchange = () => {
@@ -721,7 +766,8 @@
       device: $("deviceKind").value,
     });
   };
-  $("btnApply").onclick = () => {
+  function postOutputSettings() {
+    // Keep settingsDirty until toast_applied echoes — otherwise next state tick snaps UI back.
     post({
       type: "cmd", cmd: "set_output",
       enabled: $("outEnable").checked,
@@ -731,7 +777,19 @@
       device_kind: $("deviceKind").value,
       game_preset: $("gamePreset").value,
     });
-  };
+  }
+  function markSettingsDirty() { settingsDirty = true; }
+  $("pushMode").addEventListener("change", () => {
+    markSettingsDirty();
+    postOutputSettings(); // PRESS/CLICK must apply immediately
+  });
+  $("holdMs").addEventListener("change", markSettingsDirty);
+  $("holdMs").addEventListener("input", markSettingsDirty);
+  $("outEnable").addEventListener("change", () => { markSettingsDirty(); postOutputSettings(); });
+  $("disableFb").addEventListener("change", () => { markSettingsDirty(); postOutputSettings(); });
+  $("deviceKind").addEventListener("change", markSettingsDirty);
+  $("gamePreset").addEventListener("change", markSettingsDirty);
+  $("btnApply").onclick = () => { markSettingsDirty(); postOutputSettings(); };
   $("btnStart").onclick = () => post({ type: "cmd", cmd: "start_usb" });
   $("btnStop").onclick = () => post({ type: "cmd", cmd: "stop_usb" });
   $("btnTestDoor").onclick = () => post({ type: "cmd", cmd: "test_door" });

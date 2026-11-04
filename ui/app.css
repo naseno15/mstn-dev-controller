@@ -205,24 +205,27 @@ button.primary {
 }
 button.ghost { opacity: 0.85; }
 
+/* Compact key row under title — never stacked over notch bars */
 .axis-keys {
-  display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  flex: 0 0 auto; margin: 0 0 8px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--stroke);
 }
 .axis-key {
-  display: grid; grid-template-columns: 28px 1fr; gap: 6px; align-items: center;
-  padding: 0; border: 0; background: transparent; cursor: pointer; width: 100%;
-  color: inherit; text-align: left;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 0; border: 0; background: transparent; cursor: pointer; min-width: 0;
+  color: inherit;
 }
 .axis-key .axis-tag {
-  font-size: 10px; font-weight: 800; letter-spacing: 0.04em; color: var(--muted);
-  text-align: center;
+  font-size: 9px; font-weight: 800; letter-spacing: 0.06em; color: var(--muted);
+  line-height: 1;
 }
 .axis-key .keycap {
   display: flex; align-items: center; justify-content: center;
-  min-height: 28px; padding: 4px 6px; border-radius: 8px;
+  width: 100%; min-height: 26px; padding: 3px 2px; border-radius: 8px;
   border: 1px solid var(--stroke); box-shadow: var(--sink);
   font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 12px; font-weight: 800; color: var(--amber);
+  font-size: 11px; font-weight: 800; color: var(--amber);
   background: color-mix(in srgb, var(--glass2) 70%, transparent);
 }
 .axis-key:hover .keycap {
@@ -271,45 +274,47 @@ button.ghost { opacity: 0.85; }
 .status-badge.warn { color: #2a1a05; background: var(--amber); border-color: transparent; }
 .status-badge.bad { color: #fff; background: var(--red); border-color: transparent; }
 
-.mon { height: 100%; gap: 0; }
+.mon { height: 100%; gap: 0; overflow: hidden; }
 .mon-body {
   display: grid;
-  /* Power (narrow) | Pad (wide) | Brake (narrow) */
-  grid-template-columns: minmax(88px, 0.55fr) minmax(0, 1.9fr) minmax(88px, 0.55fr);
+  /* Power | Pad | Brake — side columns wide enough for 3 keycaps */
+  grid-template-columns: minmax(120px, 0.72fr) minmax(0, 1.7fr) minmax(120px, 0.72fr);
   gap: 10px; min-height: 0; flex: 1; overflow: hidden;
 }
 .notch-card, .pad-card {
-  border-radius: 16px; padding: 12px; min-height: 0;
+  border-radius: 16px; padding: 12px; min-height: 0; overflow: hidden;
   display: flex; flex-direction: column;
 }
-.notch-card.narrow { padding: 10px 8px; }
+.notch-card.narrow { padding: 8px 8px 10px; }
 .notch-card.narrow .nl {
-  flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 8px;
+  flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 6px;
+  margin-bottom: 6px; flex: 0 0 auto;
 }
-.notch-card.narrow .raw-bit { margin-left: 0; align-self: stretch; text-align: center; }
+.notch-card.narrow .raw-bit { margin-left: auto; }
 .nl {
   font-size: 12px; color: var(--muted); margin-bottom: 10px;
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
 }
-.nl b { color: var(--amber); font-size: 18px; margin-left: 2px; }
+.nl b { color: var(--amber); font-size: 16px; margin-left: 2px; }
 .raw-bit {
   margin-left: auto;
   font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
-  padding: 3px 8px; border-radius: 999px; border: 1px solid var(--stroke);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+  padding: 2px 7px; border-radius: 999px; border: 1px solid var(--stroke);
   background: color-mix(in srgb, var(--glass2) 70%, transparent); color: var(--text);
 }
 
 .stack {
-  display: flex; flex-direction: column-reverse; gap: 5px;
-  flex: 1; min-height: 0;
+  display: flex; flex-direction: column-reverse; gap: 3px;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
 }
 .stack .step {
-  flex: 1; min-height: 22px; border-radius: 9px; border: 1px solid var(--stroke);
+  flex: 1 1 0; min-height: 18px; border-radius: 8px; border: 1px solid var(--stroke);
   display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 700; color: var(--muted); box-shadow: var(--sink);
+  font-size: 11px; font-weight: 700; color: var(--muted); box-shadow: var(--sink);
   transition: background .08s, color .08s, border-color .08s;
 }
+.stack.brake .step { min-height: 15px; font-size: 10px; }
 .stack .step.lit { color: #14120c; border-color: transparent; box-shadow: var(--raise); }
 .stack .step.on { outline: 2px solid color-mix(in srgb, #fff 55%, transparent); outline-offset: -2px; font-weight: 800; }
 
