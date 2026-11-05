@@ -177,7 +177,7 @@ bool AppState::save_game_preset(const std::string& game, const std::string& devi
 
 void AppState::apply_output_settings(bool enabled, const std::string& push, double hold_ms,
                                      bool disable_fb, const std::string& device_kind,
-                                     const std::string& game_preset) {
+                                     const std::string& game_preset, int notch_overshoot) {
   std::string from_dev, to_dev;
   {
     std::lock_guard lock(mu_);
@@ -185,6 +185,9 @@ void AppState::apply_output_settings(bool enabled, const std::string& push, doub
     profile_.output_enabled = enabled;
     profile_.push = (push == "PRESS" || push == "press") ? PushMode::Press : PushMode::Click;
     if (hold_ms >= 0) profile_.hold_interval_ms = hold_ms;
+    if (notch_overshoot < 0) notch_overshoot = 0;
+    if (notch_overshoot > 8) notch_overshoot = 8;
+    profile_.notch_overshoot = notch_overshoot;
     profile_.disable_feedback = disable_fb;
     if (!device_kind.empty()) profile_.device_kind = device_kind;
     if (!game_preset.empty()) profile_.game_preset = game_preset;
@@ -439,6 +442,9 @@ std::string AppState::state_to_json(const ControllerState& st) const {
     << ",\"disable_feedback\":" << (profile_.disable_feedback ? "true" : "false")
     << ",\"push\":\"" << (profile_.push == PushMode::Press ? "PRESS" : "CLICK") << "\""
     << ",\"hold\":" << profile_.hold_interval_ms
+    << ",\"overshoot\":" << profile_.notch_overshoot
+    << ",\"veh_power\":" << st.veh_power_max
+    << ",\"veh_brake\":" << st.veh_brake_max
     << ",\"device_kind\":\"" << profile_.device_kind << "\""
     << ",\"game_preset\":\"" << profile_.game_preset << "\""
     << ",\"bits\":[";
@@ -486,6 +492,7 @@ void AppState::ui_tick() {
   bool door = false, vibl = false, vibr = false;
   bool have_fb = false;
   if (mmf_.ok()) {
+    mmf_.read_vehicle_notches(st);
     if (!p.disable_feedback) {
       if (test_frames_left_ > 0) {
         --test_frames_left_;
@@ -520,6 +527,8 @@ void AppState::ui_tick() {
     }
     live_.atc = st.atc;
     live_.speed = st.speed;
+    live_.veh_power_max = st.veh_power_max;
+    live_.veh_brake_max = st.veh_brake_max;
     st = live_;
     if (toast_pending_) clear_toast = true;
     if (driver_prompt_) clear_prompt = true;

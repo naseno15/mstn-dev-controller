@@ -88,6 +88,7 @@ Profile default_bve6_profile() {
   p.device_kind = "type2";
   p.game_preset = "bve6";
   p.hold_interval_ms = 1.0;
+  p.notch_overshoot = 0;
   p.push = PushMode::Click;
   p.disable_feedback = false;
   p.keys = KeyMap{};
@@ -154,6 +155,9 @@ bool load_profile(const std::wstring& path, Profile& out, std::string& err) {
   out.device_kind = json_get_string(j, "device_kind", out.device_kind);
   out.game_preset = json_get_string(j, "game_preset", out.game_preset);
   out.hold_interval_ms = json_get_number(j, "hold_interval_ms", out.hold_interval_ms);
+  out.notch_overshoot = static_cast<int>(json_get_number(j, "notch_overshoot", out.notch_overshoot));
+  if (out.notch_overshoot < 0) out.notch_overshoot = 0;
+  if (out.notch_overshoot > 8) out.notch_overshoot = 8;
   out.output_enabled = json_get_bool(j, "output_enabled", out.output_enabled);
   out.disable_feedback = json_get_bool(j, "disable_feedback", out.disable_feedback);
   const std::string push = json_get_string(j, "push", "CLICK");
@@ -195,6 +199,7 @@ bool save_profile(const std::wstring& path, const Profile& in, std::string& err)
   f << "  \"device_kind\": \"" << esc(in.device_kind) << "\",\n";
   f << "  \"game_preset\": \"" << esc(in.game_preset) << "\",\n";
   f << "  \"hold_interval_ms\": " << in.hold_interval_ms << ",\n";
+  f << "  \"notch_overshoot\": " << in.notch_overshoot << ",\n";
   f << "  \"push\": \"" << (in.push == PushMode::Press ? "PRESS" : "CLICK") << "\",\n";
   f << "  \"output_enabled\": " << (in.output_enabled ? "true" : "false") << ",\n";
   f << "  \"disable_feedback\": " << (in.disable_feedback ? "true" : "false") << ",\n";

@@ -24,6 +24,9 @@ bool AppWindow::create() {
   wc.hInstance = inst_;
   wc.lpszClassName = kClass;
   wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+  wc.hIcon = LoadIconW(inst_, MAKEINTRESOURCEW(1));
+  wc.hIconSm = static_cast<HICON>(LoadImageW(inst_, MAKEINTRESOURCEW(1), IMAGE_ICON,
+      GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
   wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
   RegisterClassExW(&wc);
 
@@ -32,7 +35,7 @@ bool AppWindow::create() {
   RECT wr{0, 0, 1280, 820};
   AdjustWindowRect(&wr, style, FALSE);
   hwnd_ = CreateWindowExW(
-      0, kClass, L"mstnDevController — Type2",
+      0, kClass, L"mstnCon — Type2",
       style,
       CW_USEDEFAULT, CW_USEDEFAULT,
       wr.right - wr.left, wr.bottom - wr.top,

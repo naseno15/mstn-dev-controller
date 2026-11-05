@@ -11,8 +11,11 @@ struct ControllerState {
 
   int power = 0;
   int brake = 0;
-  int power_max = 5;
-  int brake_max = 9; // N + B1..B8 + EB
+  int power_max = 5;  // controller span (Type2 P0..P5)
+  int brake_max = 9;  // controller span (N .. EB)
+  // From BVE NotchInfo via denconvMMF. 0 = unknown → 1:1 with controller.
+  int veh_power_max = 0;
+  int veh_brake_max = 0;
 
   bool pedal = false;
   bool btn_a = false;

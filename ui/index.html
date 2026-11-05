@@ -118,6 +118,10 @@
         <label><span class="material-icons md-16">timer</span> ms</label>
         <input id="holdMs" type="number" min="0" step="0.5" value="1" />
       </div>
+      <div class="field field-ms">
+        <label data-i18n="overshoot">เบิ้ล</label>
+        <input id="overshoot" type="number" min="0" max="8" step="1" value="0" title="extra taps at 0 / max" />
+      </div>
       <div class="device-actions">
         <label class="check sink" data-i18n-title="out_on"><input type="checkbox" id="outEnable" checked /><span class="material-icons">publish</span></label>
         <label class="check sink" data-i18n-title="disable_fb"><input type="checkbox" id="disableFb" /><span class="material-icons">block</span></label>
@@ -131,6 +135,7 @@
           <div class="panel-h">
             <h2><span class="material-icons md-16">monitor</span> <span data-i18n="monitor">Monitor</span></h2>
             <span class="map-tip" data-i18n="map_tip">คลิกปุ่มเพื่อดู/แก้คีย์</span>
+            <span id="vehNotch" class="status-badge" title="BVE power / brake steps">—</span>
             <span id="statusText" class="status-badge">—</span>
           </div>
 

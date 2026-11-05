@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(mstnDevController VERSION 1.0.0 LANGUAGES CXX)
+project(mstnDevController VERSION 1.1.0 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -94,6 +94,7 @@ add_executable(mstnDevController WIN32
   src/profile.cpp
   src/bridge_js.cpp
   src/app_state.cpp
+  src/app.rc
 )
 
 target_include_directories(mstnDevController PRIVATE

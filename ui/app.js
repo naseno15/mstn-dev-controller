@@ -638,6 +638,12 @@
     $("vibr").classList.toggle("on", !!st.vib_r);
     $("atc").textContent = st.atc ?? 0;
     $("speed").textContent = st.speed ?? 0;
+    const vp = st.veh_power | 0;
+    const vb = st.veh_brake | 0;
+    const vehEl = $("vehNotch");
+    if (vehEl) {
+      vehEl.textContent = vp || vb ? `รถ P${vp} · B${vb}` : "รถ —";
+    }
 
     const toastTitle = st.toast && st.toast.title;
     if (toastTitle === "toast_loaded" || toastTitle === "toast_saved" || toastTitle === "toast_applied") {
@@ -649,6 +655,7 @@
       if (typeof st.disable_feedback === "boolean") $("disableFb").checked = st.disable_feedback;
       if (st.push) setSelectValue("pushMode", st.push);
       if (typeof st.hold === "number") $("holdMs").value = st.hold;
+      if (typeof st.overshoot === "number") $("overshoot").value = st.overshoot;
       if (st.device_kind) setSelectValue("deviceKind", st.device_kind);
       if (st.game_preset) setSelectValue("gamePreset", st.game_preset);
       settingsSynced = true;
@@ -773,6 +780,7 @@
       enabled: $("outEnable").checked,
       push: $("pushMode").value,
       hold: Number($("holdMs").value),
+      overshoot: Number($("overshoot").value),
       disable_feedback: $("disableFb").checked,
       device_kind: $("deviceKind").value,
       game_preset: $("gamePreset").value,
@@ -785,6 +793,7 @@
   });
   $("holdMs").addEventListener("change", markSettingsDirty);
   $("holdMs").addEventListener("input", markSettingsDirty);
+  $("overshoot").addEventListener("change", () => { markSettingsDirty(); postOutputSettings(); });
   $("outEnable").addEventListener("change", () => { markSettingsDirty(); postOutputSettings(); });
   $("disableFb").addEventListener("change", () => { markSettingsDirty(); postOutputSettings(); });
   $("deviceKind").addEventListener("change", markSettingsDirty);

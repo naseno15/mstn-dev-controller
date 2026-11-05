@@ -15,6 +15,8 @@ public:
   void write_feedback(bool door, bool vib_l, bool vib_r);
   void clear_feedback();
   void read_feedback(ControllerState& st);
+  // Bytes 18–20 written by DenconvFeedback (vehicle NotchInfo).
+  void read_vehicle_notches(ControllerState& st);
 
 private:
   void* mapping_ = nullptr;

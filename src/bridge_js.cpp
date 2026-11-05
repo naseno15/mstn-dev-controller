@@ -86,7 +86,8 @@ void handle_ui_command(AppState& app, const std::string& json) {
         get_num(json, "hold", 1.0),
         get_bool(json, "disable_feedback", false),
         get_str(json, "device_kind"),
-        get_str(json, "game_preset"));
+        get_str(json, "game_preset"),
+        static_cast<int>(get_num(json, "overshoot", 0)));
   } else if (cmd == "set_key") {
     app.apply_keymap_field(get_str(json, "field"), get_str(json, "value"));
   } else if (cmd == "test_door") {

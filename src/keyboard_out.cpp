@@ -98,26 +98,37 @@ void KeyboardOut::step_axis(int& cur, int target, WORD up_vk, WORD down_vk) {
   }
 }
 
+// Stretch controller 0..ctrl_max onto the vehicle's real 0..veh_max.
+// Ends stay pinned (0 and full). Unknown vehicle (veh_max<=0) stays 1:1.
+int map_notch(int raw, int ctrl_max, int veh_max) {
+  if (raw < 0) raw = 0;
+  if (ctrl_max <= 0) return raw;
+  if (veh_max <= 0 || veh_max == ctrl_max) return raw > ctrl_max ? ctrl_max : raw;
+  if (raw <= 0) return 0;
+  if (raw >= ctrl_max) return veh_max;
+  return (raw * veh_max + ctrl_max / 2) / ctrl_max;
+}
+
 void KeyboardOut::tick(const ControllerState& st) {
   flush_pending_ups();
   if (!profile_.output_enabled || !st.connected) return;
   if (should_block_inject()) return;
 
+  const int extra = profile_.notch_overshoot < 0 ? 0 : profile_.notch_overshoot;
+
   const WORD p_up = vk_from_name(profile_.keys.power_up);
   const WORD p_dn = vk_from_name(profile_.keys.power_down);
   const WORD p_off = vk_from_name(profile_.keys.power_off);
-  const int pmax = st.power_max > 0 ? st.power_max : profile_.power_steps;
-  const int pt = st.power;
+  const int ctrl_pmax = st.power_max > 0 ? st.power_max : profile_.power_steps;
+  const int pt = map_notch(st.power, ctrl_pmax, st.veh_power_max);
+  const int pmax = st.veh_power_max > 0 ? st.veh_power_max : ctrl_pmax;
 
-  // Re-arm end-stop overshoot whenever the handle commands a new extreme.
   if (pt != power_cmd_) {
     power_cmd_ = pt;
-    if (pt == 0 || pt == pmax) power_overshoot_ = kExtremeOvershoot;
-    else power_overshoot_ = 0;
+    power_overshoot_ = (extra > 0 && (pt == 0 || pt == pmax)) ? extra : 0;
   }
 
   if (pt == 0) {
-    // Prefer Power Off key, then keep beating it so many-step packs actually hit N.
     if (cur_power_ != 0) {
       if (step_gate()) {
         tap(p_off ? p_off : p_dn, 40);
@@ -137,16 +148,16 @@ void KeyboardOut::tick(const ControllerState& st) {
   const WORD b_up = vk_from_name(profile_.keys.brake_up);
   const WORD b_dn = vk_from_name(profile_.keys.brake_down);
   const WORD b_eb = vk_from_name(profile_.keys.brake_eb);
-  const int eb_idx = st.brake_max > 0 ? st.brake_max : (profile_.brake_steps + 1);
-  const int bt = st.brake;
+  const int ctrl_bmax = st.brake_max > 0 ? st.brake_max : (profile_.brake_steps + 1);
+  const int bt = map_notch(st.brake, ctrl_bmax, st.veh_brake_max);
+  const int eb_idx = st.veh_brake_max > 0 ? st.veh_brake_max : ctrl_bmax;
 
   if (bt != brake_cmd_) {
     brake_cmd_ = bt;
-    if (bt == 0 || bt == eb_idx) brake_overshoot_ = kExtremeOvershoot;
-    else brake_overshoot_ = 0;
+    brake_overshoot_ = (extra > 0 && (bt == 0 || bt == eb_idx)) ? extra : 0;
   }
 
-  if (bt == eb_idx) {
+  if (bt == eb_idx && eb_idx > 0) {
     if (cur_brake_ != eb_idx) {
       if (step_gate()) {
         tap(b_eb ? b_eb : b_up, 40);
@@ -157,8 +168,7 @@ void KeyboardOut::tick(const ControllerState& st) {
       --brake_overshoot_;
     }
   } else if (cur_brake_ != bt) {
-    if (cur_brake_ == eb_idx) {
-      // Leaving EB: one release step then continue toward target.
+    if (cur_brake_ == eb_idx && eb_idx > 0) {
       if (step_gate()) {
         tap(b_dn, 40);
         cur_brake_ = eb_idx - 1;
@@ -167,7 +177,6 @@ void KeyboardOut::tick(const ControllerState& st) {
       step_axis(cur_brake_, bt, b_up, b_dn);
     }
   } else if (bt == 0 && brake_overshoot_ > 0 && step_gate()) {
-    // Released — extra B− so a 8/10-step vehicle is fully off for sure.
     tap(b_dn, 40);
     --brake_overshoot_;
   }

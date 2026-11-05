@@ -28,9 +28,6 @@ private:
     ULONGLONG due_ms = 0;
   };
 
-  // Extra end-stop taps (like denconv) so many-step vehicles actually hit 0 / max / EB.
-  static constexpr int kExtremeOvershoot = 4;
-
   Profile profile_{};
   HWND ignore_hwnd_ = nullptr;
   int cur_power_ = 0;

@@ -385,18 +385,25 @@ button.ghost { opacity: 0.85; }
 
 .telemetry {
   margin-top: 12px; flex-shrink: 0;
-  display: grid; grid-template-columns: 1.6fr repeat(6, minmax(0, 1fr)) 1.4fr; gap: 8px;
+  /* DEC is the wide last column so "255 · 255 · 255 · 255 · 255" stays one line */
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) repeat(6, minmax(0, 0.62fr)) minmax(248px, 2.6fr);
+  gap: 8px;
+  align-items: stretch;
 }
 .t-cell {
+  box-sizing: border-box;
+  height: 48px;
   border-radius: 12px; border: 1px solid var(--stroke); background: color-mix(in srgb, var(--glass2) 55%, transparent);
-  padding: 7px 9px; display: flex; flex-direction: column; gap: 2px; box-shadow: var(--sink);
-  min-width: 0;
+  padding: 6px 9px; display: flex; flex-direction: column; gap: 2px; box-shadow: var(--sink);
+  min-width: 0; overflow: hidden;
 }
 .t-cell.wide { grid-column: auto; }
-.t-label { font-size: 10px; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; }
+.t-label { font-size: 10px; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; line-height: 1.1; }
 .t-cell code {
   font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 13px; color: var(--text); word-break: break-all;
+  font-size: 13px; line-height: 1.2; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 .fb-lamps { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

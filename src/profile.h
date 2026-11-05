@@ -37,6 +37,8 @@ struct Profile {
   int power_steps = 5;
   int brake_steps = 8;
   double hold_interval_ms = 1.0;
+  // Extra key taps after reaching 0 / max / EB. 0 = off (default).
+  int notch_overshoot = 0;
   PushMode push = PushMode::Click;
   bool output_enabled = true;
   bool disable_feedback = false;

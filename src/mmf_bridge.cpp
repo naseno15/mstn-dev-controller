@@ -63,4 +63,18 @@ void MmfBridge::read_feedback(ControllerState& st) {
   st.speed = b[16] + b[17] * 256;
   if (st.atc > 999) st.atc = 0;
   if (st.speed > 999) st.speed = 0;
+  read_vehicle_notches(st);
+}
+
+void MmfBridge::read_vehicle_notches(ControllerState& st) {
+  if (!view_) return;
+  const auto* b = static_cast<const uint8_t*>(view_);
+  // 0xA5 = plugin wrote PowerNotchCount / EmergencyBrakeNotch this scenario
+  if (b[20] != 0xA5) {
+    st.veh_power_max = 0;
+    st.veh_brake_max = 0;
+    return;
+  }
+  st.veh_power_max = b[18];
+  st.veh_brake_max = b[19];
 }

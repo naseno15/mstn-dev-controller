@@ -39,7 +39,7 @@ public:
 
   void apply_output_settings(bool enabled, const std::string& push, double hold_ms,
                              bool disable_fb, const std::string& device_kind,
-                             const std::string& game_preset);
+                             const std::string& game_preset, int notch_overshoot);
   void apply_keymap_field(const std::string& field, const std::string& value);
 
   void test_door();
