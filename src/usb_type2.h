@@ -45,8 +45,8 @@ private:
   std::thread th_;
   mutable std::mutex cb_mu_;
   mutable std::mutex io_mu_;
-  void* file_ = nullptr;   // HANDLE
-  void* winusb_ = nullptr; // WINUSB_INTERFACE_HANDLE
+  void* file_ = nullptr;   // HANDLE | macOS: IOUSBHostDevice*
+  void* winusb_ = nullptr; // WINUSB_INTERFACE_HANDLE | macOS: IOUSBHostInterface*
   unsigned char pipe_ = 0x81;
   PacketFn on_packet_;
   StatusFn on_status_;

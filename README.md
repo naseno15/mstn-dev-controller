@@ -1,6 +1,6 @@
 # mstnDevController
 
-Win32 + **WebView2** (offline HTML glass UI) for Densha de Go / train desk controllers.
+Win32 + **WebView2** (offline HTML glass UI) for Densha de Go / train desk controllers. Also builds as a native macOS app (see [macOS](#macos-native)).
 
 - Live monitor: HEX/DEC/bits, P/B notches, buttons
 - Key map + per-game presets (`profiles/<game>-<device>.json`)
@@ -38,6 +38,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 
 ```
 
 Dynamic CRT + Loader DLL (optional): `-DMSTN_STATIC=OFF`.
+
+## macOS (native)
+
+Same UI and profiles in an AppKit + `WKWebView` app (`mstnCon.app`). macOS 12+, Xcode command line tools, CMake ≥ 3.21.
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/check_decode && ./build/check_mac_keys && ./build/check_mmf_telemetry
+open build/mstnCon.app        # or copy it to /Applications
+```
+
+- **No driver step**: Type2 is a vendor-class USB device, so `IOUSBHost` opens it directly (no Zadig/WinUSB). Door lamp / vibration work the same.
+- **Accessibility**: key output uses `CGEventPost`; allow mstnCon in System Settings → Privacy & Security → Accessibility (the app asks on first launch). Ad-hoc builds get a new signature each rebuild, so re-tick it after rebuilding — or sign with your identity: `-DMSTN_CODESIGN_ID="Apple Development: …"`.
+- Profiles live in `~/Library/Application Support/mstnCon/profiles` (seeded from the bundle once, never overwritten).
+- Universal binary (arm64 + x86_64), links only macOS system frameworks — copy `mstnCon.app` anywhere.
+- Default profile on macOS is `openbve-type2.json` (openBVE's default keys; no power-off key because openBVE's `Q` is `SINGLE_BRAKE`).
+- Keys are sent by physical position (US ANSI layout). Keep openBVE focused while driving.
+- Game feedback: with the `BveLive.Telemetry.OpenBve` input-device plugin (bve-live-dashboard `openbve-telemetry/`) enabled in openBVE, the app reads `~/Documents/BveTs/Settings/live_telemetry.json` (in place of Windows `denconvMMF`) for the train's notch counts (controller P5/B8 stretched onto the real train), speed and the door pilot lamp. Without it, notches map 1:1.
 
 ## Profiles
 

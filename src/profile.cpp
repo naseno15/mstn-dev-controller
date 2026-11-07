@@ -1,3 +1,10 @@
+#ifdef __APPLE__
+// kVK_* constants; Carbon's own `KeyMap` typedef would collide with ours.
+#define KeyMap CarbonKeyMap
+#include <Carbon/Carbon.h>
+#undef KeyMap
+#endif
+
 #include "profile.h"
 
 #include <fstream>
@@ -141,7 +148,50 @@ WORD vk_from_name(const std::string& name) {
   return 0;
 }
 
-bool load_profile(const std::wstring& path, Profile& out, std::string& err) {
+#ifdef __APPLE__
+int mac_keycode(WORD vk) {
+  static const int letters[26] = {
+      kVK_ANSI_A, kVK_ANSI_B, kVK_ANSI_C, kVK_ANSI_D, kVK_ANSI_E, kVK_ANSI_F, kVK_ANSI_G,
+      kVK_ANSI_H, kVK_ANSI_I, kVK_ANSI_J, kVK_ANSI_K, kVK_ANSI_L, kVK_ANSI_M, kVK_ANSI_N,
+      kVK_ANSI_O, kVK_ANSI_P, kVK_ANSI_Q, kVK_ANSI_R, kVK_ANSI_S, kVK_ANSI_T, kVK_ANSI_U,
+      kVK_ANSI_V, kVK_ANSI_W, kVK_ANSI_X, kVK_ANSI_Y, kVK_ANSI_Z};
+  static const int digits[10] = {kVK_ANSI_0, kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4,
+                                 kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9};
+  if (vk >= 'A' && vk <= 'Z') return letters[vk - 'A'];
+  if (vk >= '0' && vk <= '9') return digits[vk - '0'];
+  switch (vk) {
+  case VK_SPACE: return kVK_Space;
+  case VK_RETURN: return kVK_Return;
+  case VK_UP: return kVK_UpArrow;
+  case VK_DOWN: return kVK_DownArrow;
+  case VK_LEFT: return kVK_LeftArrow;
+  case VK_RIGHT: return kVK_RightArrow;
+  case VK_INSERT: return kVK_Help; // Mac extended keyboards put Help where Insert is
+  case VK_DELETE: return kVK_ForwardDelete;
+  case VK_HOME: return kVK_Home;
+  case VK_END: return kVK_End;
+  case VK_PRIOR: return kVK_PageUp;
+  case VK_NEXT: return kVK_PageDown;
+  case VK_TAB: return kVK_Tab;
+  case VK_ESCAPE: return kVK_Escape;
+  case VK_BACK: return kVK_Delete;
+  case VK_OEM_PERIOD: return kVK_ANSI_Period;
+  case VK_OEM_COMMA: return kVK_ANSI_Comma;
+  case VK_OEM_2: return kVK_ANSI_Slash;
+  case VK_OEM_1: return kVK_ANSI_Semicolon;
+  case VK_OEM_4: return kVK_ANSI_LeftBracket;
+  case VK_OEM_6: return kVK_ANSI_RightBracket;
+  case VK_OEM_5: return kVK_ANSI_Backslash;
+  case VK_OEM_7: return kVK_ANSI_Quote;
+  case VK_OEM_MINUS: return kVK_ANSI_Minus;
+  case VK_OEM_PLUS: return kVK_ANSI_Equal;
+  case VK_ADD: return kVK_ANSI_KeypadPlus;
+  default: return -1;
+  }
+}
+#endif
+
+bool load_profile(const std::filesystem::path& path, Profile& out, std::string& err) {
   std::ifstream f(path);
   if (!f) {
     err = "cannot open profile";
@@ -188,7 +238,7 @@ bool load_profile(const std::wstring& path, Profile& out, std::string& err) {
   return true;
 }
 
-bool save_profile(const std::wstring& path, const Profile& in, std::string& err) {
+bool save_profile(const std::filesystem::path& path, const Profile& in, std::string& err) {
   std::ofstream f(path);
   if (!f) {
     err = "cannot write profile";

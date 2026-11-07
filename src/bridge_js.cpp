@@ -1,8 +1,13 @@
 #include "bridge_js.h"
 
+#ifdef _WIN32
 #include <commdlg.h>
 
 #pragma comment(lib, "comdlg32.lib")
+#else
+#import <AppKit/AppKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#endif
 
 namespace {
 std::string get_str(const std::string& j, const std::string& key) {
@@ -44,6 +49,15 @@ bool get_bool(const std::string& j, const std::string& key, bool def) {
   return def;
 }
 
+#ifdef __APPLE__
+std::filesystem::path open_save_dialog(void*, bool save) {
+  NSSavePanel* panel = save ? [NSSavePanel savePanel] : [NSOpenPanel openPanel];
+  panel.allowedContentTypes = @[ UTTypeJSON ];
+  if (save) panel.nameFieldStringValue = @"profile.json";
+  if ([panel runModal] != NSModalResponseOK || !panel.URL) return {};
+  return panel.URL.fileSystemRepresentation;
+}
+#else
 std::wstring open_save_dialog(HWND owner, bool save) {
   wchar_t file[MAX_PATH] = L"profile.json";
   OPENFILENAMEW ofn{};
@@ -61,6 +75,7 @@ std::wstring open_save_dialog(HWND owner, bool save) {
   }
   return {};
 }
+#endif
 } // namespace
 
 void handle_ui_command(AppState& app, const std::string& json) {

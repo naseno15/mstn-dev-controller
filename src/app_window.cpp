@@ -136,7 +136,7 @@ void AppWindow::post_to_ui(const std::string& json) {
 
 void AppWindow::init_webview() {
   // User data folder next to exe
-  const std::wstring udf = app_.exe_dir() + L"\\webview2-data";
+  const std::wstring udf = (app_.exe_dir() / L"webview2-data").wstring();
   CreateDirectoryW(udf.c_str(), nullptr);
 
   CreateCoreWebView2EnvironmentWithOptions(
@@ -183,7 +183,7 @@ void AppWindow::init_webview() {
                               .Get(),
                           nullptr);
 
-                      const std::wstring ui = app_.exe_dir() + L"\\ui\\index.html";
+                      const std::wstring ui = (app_.exe_dir() / L"ui" / L"index.html").wstring();
                       std::wstring url = L"file:///" + ui;
                       for (auto& c : url) if (c == L'\\') c = L'/';
                       webview_->Navigate(url.c_str());

@@ -1,7 +1,29 @@
 #include "keyboard_out.h"
 
+#ifdef __APPLE__
+#import <AppKit/AppKit.h>
+
+#include <chrono>
+#endif
+
 namespace {
 
+#ifdef __APPLE__
+ULONGLONG GetTickCount64() {
+  using namespace std::chrono;
+  return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+// Needs Accessibility permission; without it macOS drops the event silently.
+void send_vk(WORD vk, bool down) {
+  const int code = mac_keycode(vk);
+  if (code < 0) return;
+  CGEventRef ev = CGEventCreateKeyboardEvent(nullptr, static_cast<CGKeyCode>(code), down);
+  if (!ev) return;
+  CGEventPost(kCGHIDEventTap, ev);
+  CFRelease(ev);
+}
+#else
 bool is_extended_vk(WORD vk) {
   return vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT ||
          vk == VK_INSERT || vk == VK_DELETE || vk == VK_HOME || vk == VK_END ||
@@ -19,10 +41,14 @@ void send_vk(WORD vk, bool down) {
   if (is_extended_vk(vk)) in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
   SendInput(1, &in, sizeof(INPUT));
 }
+#endif
 
 } // namespace
 
 bool KeyboardOut::should_block_inject() const {
+#ifdef __APPLE__
+  return NSApp.isActive; // never type into our own window
+#else
   // Never inject into our own process (main window OR WebView2 child focus).
   HWND fg = GetForegroundWindow();
   if (!fg) return false;
@@ -31,6 +57,7 @@ bool KeyboardOut::should_block_inject() const {
   if (pid == GetCurrentProcessId()) return true;
   if (ignore_hwnd_ && fg == ignore_hwnd_) return true;
   return false;
+#endif
 }
 
 void KeyboardOut::flush_pending_ups() {
@@ -130,8 +157,10 @@ void KeyboardOut::tick(const ControllerState& st) {
 
   if (pt == 0) {
     if (cur_power_ != 0) {
-      if (step_gate()) {
-        tap(p_off ? p_off : p_dn, 40);
+      if (!p_off) {
+        step_axis(cur_power_, 0, p_up, p_dn); // one down-tap only drops one notch
+      } else if (step_gate()) {
+        tap(p_off, 40);
         cur_power_ = 0;
       }
     } else if (power_overshoot_ > 0 && step_gate()) {

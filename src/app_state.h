@@ -6,11 +6,7 @@
 #include "profile.h"
 #include "usb_type2.h"
 
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-
+#include <filesystem>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -23,13 +19,15 @@ public:
   ~AppState();
 
   void set_ui_push(UiPushFn fn);
+#ifdef _WIN32
   void set_hwnd(HWND hwnd);
+#endif
 
   void start_usb();
   void stop_usb();
 
-  bool load_profile_path(const std::wstring& path, std::string& err);
-  bool save_profile_path(const std::wstring& path, std::string& err);
+  bool load_profile_path(const std::filesystem::path& path, std::string& err);
+  bool save_profile_path(const std::filesystem::path& path, std::string& err);
   bool save_game_preset(const std::string& game, const std::string& device, std::string& err);
   // Write active game/device preset to disk (no toast when quiet).
   bool persist_active_profile(bool quiet = true);
@@ -54,9 +52,10 @@ public:
 
   void ui_tick();
 
-  std::wstring exe_dir() const;
-  std::wstring default_profile_path() const;
-  std::wstring preset_path_for(const std::string& game, const std::string& device) const;
+  // Windows: folder of the exe. macOS: ~/Library/Application Support/mstnCon (bundle is read-only).
+  std::filesystem::path exe_dir() const;
+  std::filesystem::path default_profile_path() const;
+  std::filesystem::path preset_path_for(const std::string& game, const std::string& device) const;
 
 private:
   void on_packet(const uint8_t* data, int len, double hz);
@@ -71,8 +70,10 @@ private:
   MmfBridge mmf_;
   KeyboardOut keys_;
   UiPushFn ui_push_;
+#ifdef _WIN32
   HWND hwnd_ = nullptr;
-  std::wstring exe_dir_;
+#endif
+  std::filesystem::path exe_dir_;
   std::string toast_title_;
   std::string toast_body_;
   bool toast_pending_ = false;

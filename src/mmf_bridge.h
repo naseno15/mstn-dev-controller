@@ -19,7 +19,14 @@ public:
   void read_vehicle_notches(ControllerState& st);
 
 private:
+  static constexpr int kSize = 64;
   void* mapping_ = nullptr;
   void* view_ = nullptr;
-  static constexpr int kSize = 64;
+#ifdef __APPLE__
+  // macOS has no denconvMMF: view_ points at local_, filled from openBVE's live_telemetry.json.
+  void sync_telemetry();
+  uint8_t local_[kSize]{};
+  int last_doors_closed_ = -1; // -1 = no live scenario
+  int64_t last_poll_ms_ = 0;
+#endif
 };

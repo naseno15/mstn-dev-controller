@@ -1,5 +1,6 @@
 #include "usb_type2.h"
 
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -9,11 +10,16 @@
 #include <initguid.h>
 #include <usbiodef.h>
 
-#include <chrono>
-#include <cstdio>
-
 #pragma comment(lib, "winusb.lib")
 #pragma comment(lib, "setupapi.lib")
+#else
+#import <IOUSBHost/IOUSBHost.h>
+
+#include <cwchar>
+#endif
+
+#include <chrono>
+#include <cstdio>
 
 namespace {
 void emit_status(UsbType2::StatusFn& fn, std::mutex& mu, const std::string& s) {
@@ -25,6 +31,7 @@ void emit_status(UsbType2::StatusFn& fn, std::mutex& mu, const std::string& s) {
   if (cb) cb(s);
 }
 
+#ifdef _WIN32
 std::wstring lower_copy(std::wstring s) {
   for (auto& ch : s)
     if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
@@ -39,6 +46,7 @@ std::string narrow_svc(const wchar_t* w) {
     if (*p >= 'A' && *p <= 'Z') *p = static_cast<char>(*p - 'A' + 'a');
   return buf;
 }
+#endif
 } // namespace
 
 UsbType2::UsbType2() = default;
@@ -69,12 +77,14 @@ std::string UsbType2::last_fb_error() const {
   return last_fb_err_;
 }
 
+#ifdef _WIN32
 void UsbType2::abort_io() {
   std::lock_guard lock(io_mu_);
   if (winusb_) {
     WinUsb_AbortPipe(static_cast<WINUSB_INTERFACE_HANDLE>(winusb_), pipe_);
   }
 }
+#endif
 
 void UsbType2::start() {
   // Previous search may have ended (missing device) with running_=false but
@@ -96,6 +106,7 @@ void UsbType2::stop() {
   running_ = false;
 }
 
+#ifdef _WIN32
 std::wstring UsbType2::find_device_path(const std::wstring& needle) {
   GUID guid = GUID_DEVINTERFACE_USB_DEVICE;
   HDEVINFO h = SetupDiGetClassDevsW(&guid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
@@ -223,6 +234,7 @@ bool UsbType2::control_out_unlocked(void* winusb, uint8_t function, bool on) {
   }
   return true;
 }
+#endif
 
 void UsbType2::flush_feedback_unlocked(void* winusb) {
   if (!winusb || !fb_dirty_.load()) return;
@@ -259,9 +271,15 @@ bool UsbType2::send_feedback(bool door, bool vib_l, bool vib_r) {
   want_vibl_ = vib_l;
   want_vibr_ = vib_r;
   fb_dirty_ = true;
+#ifdef __APPLE__
+  // Type2 only reports on change, so a pending read can sit forever; the control pipe is
+  // independent of it on IOUSBHost, so apply now instead of waiting for the next packet.
+  flush_feedback_unlocked(winusb_);
+#endif
   return true; // queued — USB thread applies between reads
 }
 
+#ifdef _WIN32
 void UsbType2::thread_main() {
   std::wstring needle;
   {
@@ -410,3 +428,212 @@ void UsbType2::thread_main() {
   emit_status(on_status_, cb_mu_, "disconnected");
   running_ = false;
 }
+#else
+// macOS: Type2 is vendor-class (bDeviceClass 0xFF), so no kernel driver claims it and IOUSBHost
+// opens it from user space — nothing like Zadig/WinUSB to install.
+namespace {
+void parse_vidpid(const std::wstring& needle, unsigned& vid, unsigned& pid) {
+  vid = 0x0AE4;
+  pid = 0x0004;
+  std::swscanf(needle.c_str(), L"vid_%x&pid_%x", &vid, &pid);
+}
+
+io_service_t find_device(const std::wstring& needle) {
+  unsigned vid, pid;
+  parse_vidpid(needle, vid, pid);
+  return IOServiceGetMatchingService(
+      kIOMainPortDefault,
+      [IOUSBHostDevice createMatchingDictionaryWithVendorID:@(vid) productID:@(pid) bcdDevice:nil
+                                                deviceClass:nil deviceSubclass:nil deviceProtocol:nil
+                                                      speed:nil productIDArray:nil]);
+}
+
+bool is_busy(NSError* e) {
+  const auto code = static_cast<IOReturn>(e.code);
+  return code == kIOReturnExclusiveAccess || code == kIOReturnBusy;
+}
+} // namespace
+
+void UsbType2::abort_io() {} // thread_main polls stop_ every 40 ms and aborts its own read
+
+std::string UsbType2::probe_driver(const std::wstring& needle) {
+  const io_service_t svc = find_device(needle);
+  if (!svc) return "missing";
+  NSError* e = nil;
+  IOUSBHostDevice* dev = [[IOUSBHostDevice alloc] initWithIOService:svc options:IOUSBHostObjectInitOptionsNone
+                                                              queue:nil error:&e interestHandler:nil];
+  IOObjectRelease(svc);
+  if (!dev) return is_busy(e) ? "busy" : "err:" + std::to_string(static_cast<IOReturn>(e.code));
+  [dev destroy];
+  return "ok";
+}
+
+bool UsbType2::control_out_unlocked(void* winusb, uint8_t function, bool on) {
+  // hariko.com/type2.html: YY ZZ → YY=function (01 L / 02 R / 03 door), ZZ=00 off / 01 on
+  const uint8_t payload[2] = {function, static_cast<uint8_t>(on ? 0x01 : 0x00)};
+  const IOUSBDeviceRequest setup{.bmRequestType = 0x41, // Host→device | Vendor | Interface
+                                 .bRequest = 0x09, .wValue = 0x0201, .wIndex = 0x0000, .wLength = 2};
+  NSUInteger transferred = 0;
+  NSError* e = nil;
+  if (![(__bridge IOUSBHostInterface*)winusb sendDeviceRequest:setup
+                                                          data:[NSMutableData dataWithBytes:payload length:2]
+                                              bytesTransferred:&transferred
+                                             completionTimeout:0.2
+                                                         error:&e]) {
+    last_fb_err_ = "ControlTransfer err=" + std::to_string(static_cast<IOReturn>(e.code)) +
+                   " fn=" + std::to_string(function);
+    return false;
+  }
+  if (transferred != 2) {
+    last_fb_err_ = "short write n=" + std::to_string(transferred);
+    return false;
+  }
+  return true;
+}
+
+void UsbType2::thread_main() {
+  @autoreleasepool {
+    std::wstring needle;
+    {
+      std::lock_guard lock(cb_mu_);
+      needle = needle_;
+    }
+    emit_status(on_status_, cb_mu_, "searching device");
+    const io_service_t svc = find_device(needle);
+    if (!svc) {
+      emit_status(on_status_, cb_mu_, "device not found");
+      running_ = false;
+      return;
+    }
+
+    NSError* e = nil;
+    IOUSBHostDevice* dev = [[IOUSBHostDevice alloc] initWithIOService:svc options:IOUSBHostObjectInitOptionsNone
+                                                                queue:nil error:&e interestHandler:nil];
+    IOObjectRelease(svc);
+    if (!dev) {
+      emit_status(on_status_, cb_mu_,
+                  is_busy(e) ? "busy" : "open failed err=" + std::to_string(static_cast<IOReturn>(e.code)));
+      running_ = false;
+      return;
+    }
+
+    // macOS leaves an unclaimed vendor-class device unconfigured; re-configuring a configured
+    // one would tear down its interface, so only do it the first time.
+    if (!dev.configurationDescriptor) [dev configureWithValue:1 matchInterfaces:YES error:nil];
+    NSNumber* cfg = @(dev.configurationDescriptor ? dev.configurationDescriptor->bConfigurationValue : 1);
+
+    unsigned vid, pid;
+    parse_vidpid(needle, vid, pid);
+    IOUSBHostInterface* iface = nil;
+    // Interfaces register asynchronously after configure — wait up to ~2 s.
+    for (int i = 0; i < 100 && !iface && !stop_; ++i) {
+      const io_service_t is = IOServiceGetMatchingService(
+          kIOMainPortDefault,
+          [IOUSBHostInterface createMatchingDictionaryWithVendorID:@(vid) productID:@(pid) bcdDevice:nil
+                                                   interfaceNumber:@0 configurationValue:cfg
+                                                    interfaceClass:nil interfaceSubclass:nil
+                                                 interfaceProtocol:nil speed:nil productIDArray:nil]);
+      if (!is) {
+        usleep(20000);
+        continue;
+      }
+      iface = [[IOUSBHostInterface alloc] initWithIOService:is options:IOUSBHostObjectInitOptionsNone
+                                                      queue:nil error:&e interestHandler:nil];
+      IOObjectRelease(is);
+      if (!iface) break;
+    }
+    if (!iface) {
+      emit_status(on_status_, cb_mu_, (e && is_busy(e)) ? "busy" : "open failed (interface)");
+      [dev destroy];
+      running_ = false;
+      return;
+    }
+
+    uint8_t ep_addr = 0x81;
+    for (const IOUSBEndpointDescriptor* ep = nullptr;
+         (ep = IOUSBGetNextEndpointDescriptor(iface.configurationDescriptor, iface.interfaceDescriptor,
+                                              reinterpret_cast<const IOUSBDescriptorHeader*>(ep)));) {
+      if (ep->bEndpointAddress & 0x80) {
+        ep_addr = ep->bEndpointAddress;
+        break;
+      }
+    }
+    IOUSBHostPipe* pipe = [iface copyPipeWithAddress:ep_addr error:&e];
+    if (!pipe) {
+      emit_status(on_status_, cb_mu_, "open failed (pipe)");
+      [iface destroy];
+      [dev destroy];
+      running_ = false;
+      return;
+    }
+
+    {
+      std::lock_guard lock(io_mu_);
+      file_ = (__bridge void*)dev; // non-owning: the locals here keep both alive
+      winusb_ = (__bridge void*)iface;
+      pipe_ = ep_addr;
+      have_door_ = have_vibl_ = have_vibr_ = false;
+      want_door_ = want_vibl_ = want_vibr_ = false;
+      fb_dirty_ = false;
+      last_fb_err_.clear();
+    }
+
+    emit_status(on_status_, cb_mu_, "ready");
+
+    // Interrupt pipes take no timeout on macOS, so wait on the async completion in 40 ms slices
+    // and abort ourselves when stop() is requested.
+    NSMutableData* buf = [NSMutableData dataWithLength:8];
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    __block IOReturn status = kIOReturnSuccess;
+    __block NSUInteger transferred = 0;
+    int reads = 0;
+    auto t0 = std::chrono::steady_clock::now();
+
+    while (!stop_) {
+      buf.length = 8;
+      if (![pipe enqueueIORequestWithData:buf completionTimeout:0 error:&e
+                        completionHandler:^(IOReturn st, NSUInteger n) {
+                          status = st;
+                          transferred = n;
+                          dispatch_semaphore_signal(done);
+                        }])
+        break;
+      while (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 40 * NSEC_PER_MSEC)) != 0)
+        if (stop_) [pipe abortWithError:nil];
+      if (status != kIOReturnSuccess) {
+        if (stop_ || status != kUSBHostReturnPipeStalled) break; // aborted / unplugged
+        [pipe clearStallWithError:nil];
+        continue;
+      }
+      if (transferred == 0) continue;
+
+      ++reads;
+      const auto now = std::chrono::steady_clock::now();
+      const double secs = std::chrono::duration<double>(now - t0).count();
+      const double hz = reads / (secs > 0.001 ? secs : 0.001);
+
+      PacketFn copy;
+      {
+        std::lock_guard lock(cb_mu_);
+        copy = on_packet_;
+      }
+      if (copy) copy(static_cast<const uint8_t*>(buf.bytes), static_cast<int>(transferred), hz);
+    }
+
+    {
+      std::lock_guard lock(io_mu_);
+      // Force all outputs off (hariko order)
+      control_out_unlocked(winusb_, 0x01, false);
+      control_out_unlocked(winusb_, 0x02, false);
+      control_out_unlocked(winusb_, 0x03, false);
+      winusb_ = nullptr;
+      file_ = nullptr;
+    }
+    [iface destroy];
+    [dev destroy];
+
+    emit_status(on_status_, cb_mu_, "disconnected");
+    running_ = false;
+  }
+}
+#endif

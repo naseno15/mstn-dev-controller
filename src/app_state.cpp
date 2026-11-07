@@ -2,11 +2,16 @@
 
 #include <span>
 #include <sstream>
+#ifdef _WIN32
 #include <shellapi.h>
-#include <shlwapi.h>
 
-#pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
+#else
+#include <CoreFoundation/CoreFoundation.h>
+
+#include <climits>
+#include <cstdlib>
+#endif
 
 namespace {
 std::string hex_pkt(const ControllerState& st) {
@@ -21,20 +26,38 @@ std::string hex_pkt(const ControllerState& st) {
   return o.str();
 }
 
-std::wstring utf8_to_wide(const std::string& s) {
-  if (s.empty()) return {};
-  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-  std::wstring w(n > 0 ? n - 1 : 0, L'\0');
-  if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
-  return w;
+std::filesystem::path utf8_path(const std::string& s) {
+  return std::filesystem::path(std::u8string(s.begin(), s.end()));
 }
+
+#ifdef __APPLE__
+// Seeds bundled presets once; never overwrites the user's saved keymaps.
+std::filesystem::path mac_data_dir() {
+  namespace fs = std::filesystem;
+  const char* home = std::getenv("HOME");
+  const fs::path dir = fs::path(home ? home : "/tmp") / "Library/Application Support/mstnCon";
+  std::error_code ec;
+  fs::create_directories(dir / "profiles", ec);
+  if (CFURLRef res = CFBundleCopyResourcesDirectoryURL(CFBundleGetMainBundle())) {
+    char buf[PATH_MAX]{};
+    if (CFURLGetFileSystemRepresentation(res, true, reinterpret_cast<UInt8*>(buf), sizeof(buf)))
+      fs::copy(fs::path(buf) / "profiles", dir / "profiles",
+               fs::copy_options::skip_existing | fs::copy_options::recursive, ec);
+    CFRelease(res);
+  }
+  return dir;
+}
+#endif
 } // namespace
 
 AppState::AppState() {
+#ifdef _WIN32
   wchar_t path[MAX_PATH]{};
   GetModuleFileNameW(nullptr, path, MAX_PATH);
-  PathRemoveFileSpecW(path);
-  exe_dir_ = path;
+  exe_dir_ = std::filesystem::path(path).parent_path();
+#else
+  exe_dir_ = mac_data_dir();
+#endif
   profile_ = default_bve6_profile();
   calib_ = profile_.calib;
   std::string err;
@@ -53,19 +76,25 @@ AppState::~AppState() {
 
 void AppState::set_ui_push(UiPushFn fn) { ui_push_ = std::move(fn); }
 
+#ifdef _WIN32
 void AppState::set_hwnd(HWND hwnd) {
   hwnd_ = hwnd;
   keys_.set_ignore_hwnd(hwnd);
 }
+#endif
 
-std::wstring AppState::exe_dir() const { return exe_dir_; }
+std::filesystem::path AppState::exe_dir() const { return exe_dir_; }
 
-std::wstring AppState::default_profile_path() const {
-  return exe_dir_ + L"\\profiles\\bve6-type2.json";
+std::filesystem::path AppState::default_profile_path() const {
+#ifdef __APPLE__ // BVE6 is Windows-only; on macOS the game is openBVE (Q there is SINGLE_BRAKE, not power off)
+  return exe_dir_ / "profiles" / "openbve-type2.json";
+#else
+  return exe_dir_ / "profiles" / "bve6-type2.json";
+#endif
 }
 
-std::wstring AppState::preset_path_for(const std::string& game, const std::string& device) const {
-  return exe_dir_ + L"\\profiles\\" + utf8_to_wide(game + "-" + device + ".json");
+std::filesystem::path AppState::preset_path_for(const std::string& game, const std::string& device) const {
+  return exe_dir_ / "profiles" / utf8_path(game + "-" + device + ".json");
 }
 
 void AppState::start_usb() {
@@ -120,7 +149,7 @@ void AppState::stop_usb() {
   push_toast("toast_stopped", "");
 }
 
-bool AppState::load_profile_path(const std::wstring& path, std::string& err) {
+bool AppState::load_profile_path(const std::filesystem::path& path, std::string& err) {
   Profile p;
   if (!::load_profile(path, p, err)) return false;
   {
@@ -134,7 +163,7 @@ bool AppState::load_profile_path(const std::wstring& path, std::string& err) {
   return true;
 }
 
-bool AppState::save_profile_path(const std::wstring& path, std::string& err) {
+bool AppState::save_profile_path(const std::filesystem::path& path, std::string& err) {
   bool ok = false;
   {
     std::lock_guard lock(mu_);
@@ -155,7 +184,8 @@ bool AppState::persist_active_profile(bool quiet) {
   }
   if (game.empty()) game = "bve6";
   if (device.empty()) device = "type2";
-  CreateDirectoryW((exe_dir_ + L"\\profiles").c_str(), nullptr);
+  std::error_code ec;
+  std::filesystem::create_directories(exe_dir_ / "profiles", ec);
   const auto path = preset_path_for(game, device);
   std::string err;
   const bool ok = ::save_profile(path, snap, err);
@@ -170,7 +200,8 @@ bool AppState::save_game_preset(const std::string& game, const std::string& devi
     if (!device.empty()) profile_.device_kind = device;
     profile_.name = profile_.game_preset + "-" + profile_.device_kind;
   }
-  CreateDirectoryW((exe_dir_ + L"\\profiles").c_str(), nullptr);
+  std::error_code ec;
+  std::filesystem::create_directories(exe_dir_ / "profiles", ec);
   const auto path = preset_path_for(profile_.game_preset, profile_.device_kind);
   return save_profile_path(path, err);
 }
@@ -343,8 +374,10 @@ void AppState::probe_driver() {
 }
 
 void AppState::open_zadig() {
+#ifdef _WIN32 // macOS needs no driver swap — IOUSBHost opens the vendor-class device directly
   ShellExecuteW(hwnd_, L"open", L"https://zadig.akeo.ie/", nullptr, nullptr, SW_SHOWNORMAL);
   push_toast("toast_applied", "Zadig");
+#endif
 }
 
 void AppState::on_packet(const uint8_t* data, int len, double hz) {

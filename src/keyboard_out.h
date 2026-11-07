@@ -1,14 +1,15 @@
 #pragma once
 #include "controller_state.h"
 #include "profile.h"
-#include <windows.h>
 
 #include <vector>
 
 class KeyboardOut {
 public:
   void set_profile(const Profile& p) { profile_ = p; }
+#ifdef _WIN32
   void set_ignore_hwnd(HWND hwnd) { ignore_hwnd_ = hwnd; }
+#endif
 
   // Call from main/UI thread with latest decoded state.
   void tick(const ControllerState& st);
@@ -29,7 +30,9 @@ private:
   };
 
   Profile profile_{};
+#ifdef _WIN32
   HWND ignore_hwnd_ = nullptr;
+#endif
   int cur_power_ = 0;
   int cur_brake_ = 0;
   int power_cmd_ = -1;   // last commanded target (re-arms overshoot on change)
